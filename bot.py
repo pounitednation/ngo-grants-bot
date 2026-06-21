@@ -3,8 +3,10 @@ import requests
 
 BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
+print("TOKEN LENGTH:", len(BOT_TOKEN))
+
 url = f"https://api.telegram.org/bot{BOT_TOKEN}/getMe"
 
-r = requests.get(url)
+response = requests.get(url)
 
-print(r.text)
+print(response.text)
