@@ -5,10 +5,12 @@ on:
 
   schedule:
     - cron: '0 */12 * * *'
-
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -29,3 +31,8 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python bot.py
+
+      - name: Commit last_post
+        uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          commit_message: Update last_post
