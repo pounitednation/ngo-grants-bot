@@ -9,14 +9,24 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 feed = feedparser.parse(RSS_URL)
 
-if len(feed.entries) == 0:
-    print("No entries found")
+if not feed.entries:
+    print("No entries")
     exit()
 
 entry = feed.entries[0]
 
 title = entry.title
 link = entry.link
+
+try:
+    with open("last_post.txt", "r", encoding="utf-8") as f:
+        last_link = f.read().strip()
+except:
+    last_link = ""
+
+if link == last_link:
+    print("Already posted")
+    exit()
 
 message = f"""📢 Новий грант
 
@@ -36,3 +46,7 @@ response = requests.post(
 )
 
 print(response.text)
+
+if response.status_code == 200:
+    with open("last_post.txt", "w", encoding="utf-8") as f:
+        f.write(link)
