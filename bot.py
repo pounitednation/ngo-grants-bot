@@ -17,6 +17,7 @@ entry = feed.entries[0]
 
 title = entry.title
 link = entry.link
+link = link.split("?")[0]
 
 try:
     with open("last_post.txt", "r", encoding="utf-8") as f:
@@ -29,11 +30,11 @@ if link == last_link:
     exit()
 
 message = f"""
-🌍 {title}
+🌍 <b>{title}</b>
 
 📌 Нова грантова можливість
 
-🔗 Деталі:
+🔗 🔗 Деталі:
 {link}
 """
 
@@ -43,7 +44,8 @@ response = requests.post(
     url,
     data={
         "chat_id": CHAT_ID,
-        "text": message
+        "text": message,
+        "parse_mode": "HTML"
     }
 )
 
