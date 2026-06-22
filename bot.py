@@ -28,11 +28,13 @@ if link == last_link:
     print("Already posted")
     exit()
 
-message = f"""📢 Новий грант
+message = f"""
+🌍 {title}
 
-{title}
+📌 Нова грантова можливість
 
-🔗 {link}
+🔗 Деталі:
+{link}
 """
 
 url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
