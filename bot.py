@@ -10,47 +10,46 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 feed = feedparser.parse(RSS_URL)
 
 if not feed.entries:
-    print("No entries")
-    exit()
+print("No entries")
+exit()
 
 entry = feed.entries[0]
 
 title = entry.title
-link = entry.link
-link = link.split("?")[0]
+link = entry.link.split("?")[0]
 
 try:
-    with open("last_post.txt", "r", encoding="utf-8") as f:
-        last_link = f.read().strip()
+with open("last_post.txt", "r", encoding="utf-8") as f:
+last_link = f.read().strip()
 except:
-    last_link = ""
+last_link = ""
 
 if link == last_link:
-    print("Already posted")
-    exit()
+print("Already posted")
+exit()
 
 message = f"""
 🌍 <b>{title}</b>
 
 📌 Нова грантова можливість
 
-🔗 🔗 Деталі:
+🔗 Деталі:
 {link}
 """
 
 url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
 response = requests.post(
-    url,
-    data={
-        "chat_id": CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML"
-    }
+url,
+data={
+"chat_id": CHAT_ID,
+"text": message,
+"parse_mode": "HTML"
+}
 )
 
 print(response.text)
 
 if response.status_code == 200:
-    with open("last_post.txt", "w", encoding="utf-8") as f:
-        f.write(link)
+with open("last_post.txt", "w", encoding="utf-8") as f:
+f.write(link)
