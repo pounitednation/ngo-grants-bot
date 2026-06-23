@@ -108,4 +108,3 @@ print(response.text)
 if response.status_code == 200:
     with open("last_post.txt", "w", encoding="utf-8") as f:
         f.write(link)
-```
