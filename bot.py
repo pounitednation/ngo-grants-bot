@@ -34,7 +34,15 @@ if link == last_link:
 page = requests.get(link, timeout=30)
 soup = BeautifulSoup(page.text, "html.parser")
 
-text = soup.get_text(" ", strip=True)
+article = soup.find("article")
+
+if article:
+    text = article.get_text(" ", strip=True)
+else:
+    text = soup.get_text(" ", strip=True)
+if "ДЕДЛАЙН:" in text:
+    start = text.find("ДЕДЛАЙН:")
+    text = text[start:]
 
 # -------------------------
 # ОЧИЩЕННЯ РЕКЛАМИ
@@ -55,9 +63,45 @@ for phrase in bad_phrases:
 # КОРОТКИЙ ОПИС
 # -------------------------
 
-summary = text[:450]
+summary = text
+
+remove_parts = [
+    deadline = "не зазначено"
+
+match = re.search(
+    r"ДЕДЛАЙН:\s*(.*?)\s*ДЕ:",
+    text,
+    re.IGNORECASE
+)
+
+if match:
+    deadline = match.group(1).strip(),
+    location = "Україна"
+
+match = re.search(
+    r"ДЕ:\s*(.*?)\s*ГАЛУЗІ:",
+    text,
+    re.IGNORECASE
+)
+
+if match:
+    location = match.group(1).strip()
+    "Подати заявку ТУТ",
+    "Ми допомагаємо в оформленні",
+    "ШКОЛА ГРАНТОЗНАВСТВА",
+]
+
+for part in remove_parts:
+    if part in summary:
+        summary = summary.split(part)[0]
+
+summary = summary.strip()
+
+if len(summary) > 500:
+    summary = summary[:500]
 
 last_dot = summary.rfind(".")
+
 if last_dot > 200:
     summary = summary[:last_dot + 1]
 
