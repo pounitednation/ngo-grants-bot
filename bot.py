@@ -11,7 +11,7 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 feed = feedparser.parse(RSS_URL)
 
-if len(feed.entries) == 0:
+if not feed.entries:
     print("No entries")
     exit()
 
@@ -30,7 +30,7 @@ if link == last_link:
     print("Already posted")
     exit()
 
-# Отримуємо сторінку гранту
+# Завантажуємо сторінку гранту
 page = requests.get(link, timeout=30)
 soup = BeautifulSoup(page.text, "html.parser")
 
@@ -40,9 +40,10 @@ if article:
     text = article.get_text(" ", strip=True)
 else:
     text = soup.get_text(" ", strip=True)
+
+# Відсікаємо меню сайту до слова ДЕДЛАЙН
 if "ДЕДЛАЙН:" in text:
-    start = text.find("ДЕДЛАЙН:")
-    text = text[start:]
+    text = text[text.find("ДЕДЛАЙН:"):]
 
 # -------------------------
 # ОЧИЩЕННЯ РЕКЛАМИ
@@ -53,6 +54,8 @@ bad_phrases = [
     "Замовити оформлення грантової заявки",
     "ШКОЛА ГРАНТОЗНАВСТВА",
     "Подати заявку ТУТ",
+    "Консультація",
+    "Грантова заявка",
 ]
 
 for phrase in bad_phrases:
@@ -63,47 +66,39 @@ for phrase in bad_phrases:
 # КОРОТКИЙ ОПИС
 # -------------------------
 
-summary = text
+summary = ""
 
-remove_parts = [
-    deadline = "не зазначено"
+paragraphs = re.split(r"\.\s+", text)
 
-match = re.search(
-    r"ДЕДЛАЙН:\s*(.*?)\s*ДЕ:",
-    text,
-    re.IGNORECASE
-)
+for p in paragraphs:
+    p = p.strip()
 
-if match:
-    deadline = match.group(1).strip(),
-    location = "Україна"
+    if len(p) < 50:
+        continue
 
-match = re.search(
-    r"ДЕ:\s*(.*?)\s*ГАЛУЗІ:",
-    text,
-    re.IGNORECASE
-)
+    if "ДЕДЛАЙН" in p:
+        continue
 
-if match:
-    location = match.group(1).strip()
-    "Подати заявку ТУТ",
-    "Ми допомагаємо в оформленні",
-    "ШКОЛА ГРАНТОЗНАВСТВА",
-]
+    if "ДЕ:" in p:
+        continue
 
-for part in remove_parts:
-    if part in summary:
-        summary = summary.split(part)[0]
+    if "ГАЛУЗІ:" in p:
+        continue
 
-summary = summary.strip()
+    if "Подати заявку" in p:
+        continue
 
-if len(summary) > 500:
-    summary = summary[:500]
+    if "Ми допомагаємо" in p:
+        continue
 
-last_dot = summary.rfind(".")
+    summary = p
+    break
 
-if last_dot > 200:
-    summary = summary[:last_dot + 1]
+if not summary:
+    summary = title
+
+if len(summary) > 450:
+    summary = summary[:450] + "..."
 
 # -------------------------
 # ПОШУК ДЕДЛАЙНУ
@@ -111,38 +106,38 @@ if last_dot > 200:
 
 deadline = "не зазначено"
 
-deadline_patterns = [
-    r"Deadline:\s*([^\n\.]+)",
-    r"Дедлайн[:\s]*([^\n\.]+)",
-    r"Closing Date[:\s]*([^\n\.]+)",
-]
+match = re.search(
+    r"ДЕДЛАЙН:\s*(.*?)\s*(ДЕ:|ГАЛУЗІ:)",
+    text,
+    re.IGNORECASE
+)
 
-for pattern in deadline_patterns:
-    match = re.search(pattern, text, re.IGNORECASE)
-    if match:
-        deadline = match.group(1).strip()
-        break
+if match:
+    deadline = match.group(1).strip()
 
 # -------------------------
-# ПОШУК СУМИ
+# ПОШУК СУМИ ГРАНТУ
 # -------------------------
 
 amount = "не зазначено"
 
 amount_patterns = [
-    r"\$[\d,]+",
-    r"€[\d,]+",
-    r"£[\d,]+",
-    r"USD\s*[\d,]+",
-    r"EUR\s*[\d,]+",
-    r"up to\s*\$[\d,]+",
-    r"up to\s*€[\d,]+",
+    r"до\s*\$[\d\s,\.]+",
+    r"до\s*€[\d\s,\.]+",
+    r"до\s*£[\d\s,\.]+",
+    r"\$[\d\s,\.]+",
+    r"€[\d\s,\.]+",
+    r"£[\d\s,\.]+",
+    r"USD\s*[\d\s,\.]+",
+    r"EUR\s*[\d\s,\.]+",
+    r"грн\.?\s*[\d\s,\.]+",
 ]
 
 for pattern in amount_patterns:
     match = re.search(pattern, text, re.IGNORECASE)
+
     if match:
-        amount = match.group(0)
+        amount = match.group(0).strip()
         break
 
 # -------------------------
@@ -156,11 +151,9 @@ message = f"""
 
 📢 <b>Відкрито прийом заявок</b>
 
-📅 <b>Дедлайн:</b>
-{deadline}
+📅 <b>Дедлайн:</b> {deadline}
 
-💰 <b>Фінансування:</b>
-{amount}
+💰 <b>Фінансування:</b> {amount}
 
 🇺🇦 <b>Для України:</b>
 Участь доступна для українських організацій та заявників відповідно до умов конкурсу.
