@@ -30,66 +30,99 @@ if link == last_link:
     print("Already posted")
     exit()
 
-# Завантаження сторінки гранту
-description = ""
-deadline = ""
-donor = ""
+# Отримуємо сторінку гранту
+page = requests.get(link, timeout=30)
+soup = BeautifulSoup(page.text, "html.parser")
 
-try:
-    page = requests.get(link, timeout=20)
-    soup = BeautifulSoup(page.text, "lxml")
+text = soup.get_text(" ", strip=True)
 
-    paragraphs = soup.find_all("p")
+# -------------------------
+# ОЧИЩЕННЯ РЕКЛАМИ
+# -------------------------
 
-    for p in paragraphs:
-        text = p.get_text(" ", strip=True)
+bad_phrases = [
+    "Ми допомагаємо в оформленні",
+    "Замовити оформлення грантової заявки",
+    "ШКОЛА ГРАНТОЗНАВСТВА",
+    "Подати заявку ТУТ",
+]
 
-        if len(text) > 80:
-            description = text[:400]
-            break
+for phrase in bad_phrases:
+    if phrase in text:
+        text = text.split(phrase)[0]
 
-    page_text = soup.get_text(" ", strip=True)
+# -------------------------
+# КОРОТКИЙ ОПИС
+# -------------------------
 
-    deadline_patterns = [
-        r"Deadline:\s*([^.]+)",
-        r"Дедлайн:\s*([^.]+)",
-        r"Deadline Date:\s*([^.]+)"
-    ]
+summary = text[:450]
 
-    for pattern in deadline_patterns:
-        match = re.search(pattern, page_text, re.IGNORECASE)
-        if match:
-            deadline = match.group(1).strip()
-            break
+last_dot = summary.rfind(".")
+if last_dot > 200:
+    summary = summary[:last_dot + 1]
 
-    if "European Commission" in page_text:
-        donor = "European Commission"
-    elif "UNDP" in page_text:
-        donor = "UNDP"
-    elif "UNHCR" in page_text:
-        donor = "UNHCR"
+# -------------------------
+# ПОШУК ДЕДЛАЙНУ
+# -------------------------
 
-except Exception as e:
-    print(e)
+deadline = "не зазначено"
 
-message = f"🌍 <b>{title}</b>\n\n"
+deadline_patterns = [
+    r"Deadline:\s*([^\n\.]+)",
+    r"Дедлайн[:\s]*([^\n\.]+)",
+    r"Closing Date[:\s]*([^\n\.]+)",
+]
 
-if description:
-    message += f"{description}\n\n"
+for pattern in deadline_patterns:
+    match = re.search(pattern, text, re.IGNORECASE)
+    if match:
+        deadline = match.group(1).strip()
+        break
 
-message += "📢 <b>Відкрито прийом заявок</b>\n\n"
+# -------------------------
+# ПОШУК СУМИ
+# -------------------------
 
-if deadline:
-    message += f"🗓 <b>Дедлайн:</b>\n{deadline}\n\n"
+amount = "не зазначено"
 
-if donor:
-    message += f"🏢 <b>Донор:</b>\n{donor}\n\n"
+amount_patterns = [
+    r"\$[\d,]+",
+    r"€[\d,]+",
+    r"£[\d,]+",
+    r"USD\s*[\d,]+",
+    r"EUR\s*[\d,]+",
+    r"up to\s*\$[\d,]+",
+    r"up to\s*€[\d,]+",
+]
 
-message += """🇺🇦 <b>Для України:</b>
-Участь доступна для українських організацій та заявників.
+for pattern in amount_patterns:
+    match = re.search(pattern, text, re.IGNORECASE)
+    if match:
+        amount = match.group(0)
+        break
 
-🔗 <a href="{0}">Деталі конкурсу</a>
-""".format(link)
+# -------------------------
+# ФОРМУВАННЯ ПОВІДОМЛЕННЯ
+# -------------------------
+
+message = f"""
+🌍 <b>{title}</b>
+
+{summary}
+
+📢 <b>Відкрито прийом заявок</b>
+
+📅 <b>Дедлайн:</b>
+{deadline}
+
+💰 <b>Фінансування:</b>
+{amount}
+
+🇺🇦 <b>Для України:</b>
+Участь доступна для українських організацій та заявників відповідно до умов конкурсу.
+
+🔗 <a href="{link}">Деталі конкурсу</a>
+"""
 
 url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
@@ -99,7 +132,7 @@ response = requests.post(
         "chat_id": CHAT_ID,
         "text": message,
         "parse_mode": "HTML",
-        "disable_web_page_preview": True
+        "disable_web_page_preview": False
     }
 )
 
