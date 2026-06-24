@@ -29,9 +29,8 @@ entries = feed.entries[:10]
 
 for entry in reversed(entries):
 
-```
-title = entry.title.strip()
-link = entry.link
+    title = entry.title.strip()
+    link = entry.link
 
 if link in posted_links:
     continue
