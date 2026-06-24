@@ -71,12 +71,32 @@ for entry in reversed(entries):
         # Для кого
         target = ""
         match = re.search(
-            r"Для кого[:\s]*(.*?)(Сума|$)",
+            r"Для кого[:\s]*(.*?)(Сума|Дедлайн|Подати заявку|$)",
             text,
             re.IGNORECASE
         )
         if match:
-            target = match.group(1).strip()
+            raw_target = match.group(1).strip()
+            # Беремо лише перші 1-2 речення, відкидаючи сміттєві блоки
+            # (підручники, школа грантознавства, інші заголовки тощо)
+            junk_markers = [
+                "ПІДРУЧНИК", "ПОСІБНИК", "ПОРАДНИК", "КАТАЛОГ ФОНДІВ",
+                "ШКОЛА ГРАНТОЗНАВСТВА", "Подати заявку ТУТ", "HOW TO GET",
+                "Можливо, ви захочете", "ДОСЛІДНИЦЬКА РЕЗИДЕНЦІЯ",
+                "ГРАНТИ НА ВИРОБНИЦТВО", "Дедлайн подачі"
+            ]
+            sentences = re.split(r"(?<=[.!?])\s+", raw_target)
+            clean_sentences = []
+            for s in sentences:
+                if any(marker.lower() in s.lower() for marker in junk_markers):
+                    break
+                if s.strip():
+                    clean_sentences.append(s.strip())
+                if len(clean_sentences) >= 2:
+                    break
+            target = " ".join(clean_sentences).strip()
+            if len(target) > 400:
+                target = target[:400] + "..."
 
         # Короткий опис
         summary = ""
@@ -115,7 +135,7 @@ for entry in reversed(entries):
 {target}
 """
         message += f"""
-💡 <b>Коротко:</b>
+💡 <b>Деталі:</b>
 {summary}
 🔗 <a href="{link}">Деталі гранту</a>
 """
