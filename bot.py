@@ -39,7 +39,7 @@ if link in posted_links:
 print(f"Processing: {title}")
 
 try:
-    # Завантажуємо сторінку гранту
+
     page = requests.get(link, timeout=30)
 
     soup = BeautifulSoup(page.text, "html.parser")
@@ -51,69 +51,7 @@ try:
     else:
         text = soup.get_text(" ", strip=True)
 
-    # Відсікаємо меню сайту до слова ДЕДЛАЙН
-    if "ДЕДЛАЙН:" in text:
-        text = text[text.find("ДЕДЛАЙН:"):]
-
-    # -------------------------
-    # ОЧИЩЕННЯ РЕКЛАМИ
-    # -------------------------
-
-    bad_phrases = [
-        "Ми допомагаємо в оформленні",
-        "Замовити оформлення грантової заявки",
-        "ШКОЛА ГРАНТОЗНАВСТВА",
-        "Подати заявку ТУТ",
-        "Консультація",
-        "Грантова заявка",
-    ]
-
-    for phrase in bad_phrases:
-        if phrase in text:
-            text = text.split(phrase)[0]
-
-    # -------------------------
-    # КОРОТКИЙ ОПИС
-    # -------------------------
-
-    summary = ""
-
-    paragraphs = re.split(r"\.\s+", text)
-
-    for p in paragraphs:
-
-        p = p.strip()
-
-        if len(p) < 50:
-            continue
-
-        if "ДЕДЛАЙН" in p:
-            continue
-
-        if "ДЕ:" in p:
-            continue
-
-        if "ГАЛУЗІ:" in p:
-            continue
-
-        if "Подати заявку" in p:
-            continue
-
-        if "Ми допомагаємо" in p:
-            continue
-
-        summary = p
-        break
-
-    if not summary:
-        summary = title
-
-    if len(summary) > 450:
-        summary = summary[:450] + "..."
-
-    # -------------------------
-    # ПОШУК ДЕДЛАЙНУ
-    # -------------------------
+    # Дедлайн
 
     deadline = "не зазначено"
 
@@ -126,53 +64,113 @@ try:
     if match:
         deadline = match.group(1).strip()
 
-    # -------------------------
-    # ПОШУК СУМИ
-    # -------------------------
+    # Де
 
-    amount = "не зазначено"
+    location = "не зазначено"
 
-    amount_patterns = [
-        r"до\s*\$[\d\s,\.]+",
-        r"до\s*€[\d\s,\.]+",
-        r"до\s*£[\d\s,\.]+",
-        r"\$[\d\s,\.]+",
-        r"€[\d\s,\.]+",
-        r"£[\d\s,\.]+",
-        r"USD\s*[\d\s,\.]+",
-        r"EUR\s*[\d\s,\.]+",
-        r"грн\.?\s*[\d\s,\.]+",
-    ]
+    match = re.search(
+        r"ДЕ:\s*(.*?)\s*ГАЛУЗІ:",
+        text,
+        re.IGNORECASE
+    )
 
-    for pattern in amount_patterns:
+    if match:
+        location = match.group(1).strip()
 
-        match = re.search(pattern, text, re.IGNORECASE)
+    # Галузі
 
-        if match:
-            amount = match.group(0).strip()
+    sectors = "не зазначено"
+
+    match = re.search(
+        r"ГАЛУЗІ:\s*(.*?)(Ми допомагаємо|Сума|Для кого|$)",
+        text,
+        re.IGNORECASE
+    )
+
+    if match:
+        sectors = match.group(1).strip()
+
+    # Для кого
+
+    target = ""
+
+    match = re.search(
+        r"Для кого[:\s]*(.*?)(Сума|$)",
+        text,
+        re.IGNORECASE
+    )
+
+    if match:
+        target = match.group(1).strip()
+
+    # Короткий опис
+
+    summary = ""
+
+    if "Сума" in text:
+
+        after_sum = text.split("Сума", 1)[1]
+
+        paragraphs = re.split(r"\.\s+", after_sum)
+
+        for p in paragraphs:
+
+            p = p.strip()
+
+            if len(p) < 80:
+                continue
+
+            if "Ми допомагаємо" in p:
+                continue
+
+            if "Замовити" in p:
+                continue
+
+            if "Подати заявку" in p:
+                continue
+
+            if "ШКОЛА ГРАНТОЗНАВСТВА" in p:
+                continue
+
+            summary = p
             break
 
-    # -------------------------
-    # ПОВІДОМЛЕННЯ
-    # -------------------------
+    if not summary:
+        summary = title
+
+    if len(summary) > 800:
+        summary = summary[:800] + "..."
 
     message = f"""
 ```
 
 🌍 <b>{title}</b>
 
-{summary}
-
-📢 <b>Відкрито прийом заявок</b>
-
 📅 <b>Дедлайн:</b> {deadline}
 
-💰 <b>Фінансування:</b> {amount}
+🌍 <b>Де:</b> {location}
 
-🇺🇦 <b>Для України:</b>
-Участь доступна для українських організацій та заявників відповідно до умов конкурсу.
+🎯 <b>Галузі:</b> {sectors}
+"""
 
-🔗 <a href="{link}">Деталі конкурсу</a>
+```
+    if target:
+        message += f"""
+```
+
+👥 <b>Для кого:</b>
+{target}
+"""
+
+```
+    message += f"""
+```
+
+💡 <b>Коротко:</b>
+
+{summary}
+
+🔗 <a href="{link}">Деталі гранту</a>
 """
 
 ```
