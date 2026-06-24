@@ -12,139 +12,153 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 feed = feedparser.parse(RSS_URL)
 
 if not feed.entries:
-    print("No entries")
-    exit()
+print("No entries")
+exit()
 
-entry = feed.entries[0]
+# Завантажуємо список вже опублікованих грантів
 
+try:
+with open("posted_links.txt", "r", encoding="utf-8") as f:
+posted_links = set(f.read().splitlines())
+except:
+posted_links = set()
+
+# Перевіряємо останні 10 грантів
+
+entries = feed.entries[:10]
+
+for entry in reversed(entries):
+
+```
 title = entry.title.strip()
 link = entry.link
 
+if link in posted_links:
+    continue
+
+print(f"Processing: {title}")
+
 try:
-    with open("last_post.txt", "r", encoding="utf-8") as f:
-        last_link = f.read().strip()
-except:
-    last_link = ""
+    # Завантажуємо сторінку гранту
+    page = requests.get(link, timeout=30)
 
-if link == last_link:
-    print("Already posted")
-    exit()
+    soup = BeautifulSoup(page.text, "html.parser")
 
-# Завантажуємо сторінку гранту
-page = requests.get(link, timeout=30)
-soup = BeautifulSoup(page.text, "html.parser")
+    article = soup.find("article")
 
-article = soup.find("article")
+    if article:
+        text = article.get_text(" ", strip=True)
+    else:
+        text = soup.get_text(" ", strip=True)
 
-if article:
-    text = article.get_text(" ", strip=True)
-else:
-    text = soup.get_text(" ", strip=True)
+    # Відсікаємо меню сайту до слова ДЕДЛАЙН
+    if "ДЕДЛАЙН:" in text:
+        text = text[text.find("ДЕДЛАЙН:"):]
 
-# Відсікаємо меню сайту до слова ДЕДЛАЙН
-if "ДЕДЛАЙН:" in text:
-    text = text[text.find("ДЕДЛАЙН:"):]
+    # -------------------------
+    # ОЧИЩЕННЯ РЕКЛАМИ
+    # -------------------------
 
-# -------------------------
-# ОЧИЩЕННЯ РЕКЛАМИ
-# -------------------------
+    bad_phrases = [
+        "Ми допомагаємо в оформленні",
+        "Замовити оформлення грантової заявки",
+        "ШКОЛА ГРАНТОЗНАВСТВА",
+        "Подати заявку ТУТ",
+        "Консультація",
+        "Грантова заявка",
+    ]
 
-bad_phrases = [
-    "Ми допомагаємо в оформленні",
-    "Замовити оформлення грантової заявки",
-    "ШКОЛА ГРАНТОЗНАВСТВА",
-    "Подати заявку ТУТ",
-    "Консультація",
-    "Грантова заявка",
-]
+    for phrase in bad_phrases:
+        if phrase in text:
+            text = text.split(phrase)[0]
 
-for phrase in bad_phrases:
-    if phrase in text:
-        text = text.split(phrase)[0]
+    # -------------------------
+    # КОРОТКИЙ ОПИС
+    # -------------------------
 
-# -------------------------
-# КОРОТКИЙ ОПИС
-# -------------------------
+    summary = ""
 
-summary = ""
+    paragraphs = re.split(r"\.\s+", text)
 
-paragraphs = re.split(r"\.\s+", text)
+    for p in paragraphs:
 
-for p in paragraphs:
-    p = p.strip()
+        p = p.strip()
 
-    if len(p) < 50:
-        continue
+        if len(p) < 50:
+            continue
 
-    if "ДЕДЛАЙН" in p:
-        continue
+        if "ДЕДЛАЙН" in p:
+            continue
 
-    if "ДЕ:" in p:
-        continue
+        if "ДЕ:" in p:
+            continue
 
-    if "ГАЛУЗІ:" in p:
-        continue
+        if "ГАЛУЗІ:" in p:
+            continue
 
-    if "Подати заявку" in p:
-        continue
+        if "Подати заявку" in p:
+            continue
 
-    if "Ми допомагаємо" in p:
-        continue
+        if "Ми допомагаємо" in p:
+            continue
 
-    summary = p
-    break
-
-if not summary:
-    summary = title
-
-if len(summary) > 450:
-    summary = summary[:450] + "..."
-
-# -------------------------
-# ПОШУК ДЕДЛАЙНУ
-# -------------------------
-
-deadline = "не зазначено"
-
-match = re.search(
-    r"ДЕДЛАЙН:\s*(.*?)\s*(ДЕ:|ГАЛУЗІ:)",
-    text,
-    re.IGNORECASE
-)
-
-if match:
-    deadline = match.group(1).strip()
-
-# -------------------------
-# ПОШУК СУМИ ГРАНТУ
-# -------------------------
-
-amount = "не зазначено"
-
-amount_patterns = [
-    r"до\s*\$[\d\s,\.]+",
-    r"до\s*€[\d\s,\.]+",
-    r"до\s*£[\d\s,\.]+",
-    r"\$[\d\s,\.]+",
-    r"€[\d\s,\.]+",
-    r"£[\d\s,\.]+",
-    r"USD\s*[\d\s,\.]+",
-    r"EUR\s*[\d\s,\.]+",
-    r"грн\.?\s*[\d\s,\.]+",
-]
-
-for pattern in amount_patterns:
-    match = re.search(pattern, text, re.IGNORECASE)
-
-    if match:
-        amount = match.group(0).strip()
+        summary = p
         break
 
-# -------------------------
-# ФОРМУВАННЯ ПОВІДОМЛЕННЯ
-# -------------------------
+    if not summary:
+        summary = title
 
-message = f"""
+    if len(summary) > 450:
+        summary = summary[:450] + "..."
+
+    # -------------------------
+    # ПОШУК ДЕДЛАЙНУ
+    # -------------------------
+
+    deadline = "не зазначено"
+
+    match = re.search(
+        r"ДЕДЛАЙН:\s*(.*?)\s*(ДЕ:|ГАЛУЗІ:)",
+        text,
+        re.IGNORECASE
+    )
+
+    if match:
+        deadline = match.group(1).strip()
+
+    # -------------------------
+    # ПОШУК СУМИ
+    # -------------------------
+
+    amount = "не зазначено"
+
+    amount_patterns = [
+        r"до\s*\$[\d\s,\.]+",
+        r"до\s*€[\d\s,\.]+",
+        r"до\s*£[\d\s,\.]+",
+        r"\$[\d\s,\.]+",
+        r"€[\d\s,\.]+",
+        r"£[\d\s,\.]+",
+        r"USD\s*[\d\s,\.]+",
+        r"EUR\s*[\d\s,\.]+",
+        r"грн\.?\s*[\d\s,\.]+",
+    ]
+
+    for pattern in amount_patterns:
+
+        match = re.search(pattern, text, re.IGNORECASE)
+
+        if match:
+            amount = match.group(0).strip()
+            break
+
+    # -------------------------
+    # ПОВІДОМЛЕННЯ
+    # -------------------------
+
+    message = f"""
+```
+
 🌍 <b>{title}</b>
 
 {summary}
@@ -161,20 +175,26 @@ message = f"""
 🔗 <a href="{link}">Деталі конкурсу</a>
 """
 
-url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+```
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-response = requests.post(
-    url,
-    data={
-        "chat_id": CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": False
-    }
-)
+    response = requests.post(
+        url,
+        data={
+            "chat_id": CHAT_ID,
+            "text": message,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": False
+        }
+    )
 
-print(response.text)
+    print(response.text)
 
-if response.status_code == 200:
-    with open("last_post.txt", "w", encoding="utf-8") as f:
-        f.write(link)
+    if response.status_code == 200:
+
+        with open("posted_links.txt", "a", encoding="utf-8") as f:
+            f.write(link + "\n")
+
+except Exception as e:
+    print(f"ERROR: {e}")
+    continue
