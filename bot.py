@@ -12,8 +12,8 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 feed = feedparser.parse(RSS_URL)
 
 if not feed.entries:
-print("No entries")
-exit()
+    print("No entries")
+    exit()
 
 # Завантажуємо список вже опублікованих грантів
 
