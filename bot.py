@@ -68,55 +68,76 @@ for entry in reversed(entries):
         if match:
             sectors = match.group(1).strip()
 
-        # Для кого
+        # Маркери сторонніх рекламних блоків, які треба відкидати
+        junk_markers = [
+            "ПІДРУЧНИК", "ПОСІБНИК", "ПОРАДНИК", "КАТАЛОГ ФОНДІВ",
+            "ШКОЛА ГРАНТОЗНАВСТВА", "Подати заявку ТУТ", "HOW TO GET",
+            "Можливо, ви захочете", "Замовити оформлення",
+            "Ми допомагаємо в оформленні"
+        ]
+
+        def is_junk(sentence):
+            return any(marker.lower() in sentence.lower() for marker in junk_markers)
+
+        # Для кого — беремо абзац-пояснення одразу після заголовка "Для кого",
+        # до наступного заголовка ("До участі допускаються" / "Сума" / "Дедлайн")
         target = ""
         match = re.search(
-            r"Для кого[:\s]*(.*?)(Сума|Дедлайн|Подати заявку|$)",
+            r"Для кого[:\s]*(.*?)(До участі допускаються|Сума|Дедлайн[:\s]|$)",
             text,
             re.IGNORECASE
         )
         if match:
             raw_target = match.group(1).strip()
-            # Беремо лише перші 1-2 речення, відкидаючи сміттєві блоки
-            # (підручники, школа грантознавства, інші заголовки тощо)
-            junk_markers = [
-                "ПІДРУЧНИК", "ПОСІБНИК", "ПОРАДНИК", "КАТАЛОГ ФОНДІВ",
-                "ШКОЛА ГРАНТОЗНАВСТВА", "Подати заявку ТУТ", "HOW TO GET",
-                "Можливо, ви захочете", "ДОСЛІДНИЦЬКА РЕЗИДЕНЦІЯ",
-                "ГРАНТИ НА ВИРОБНИЦТВО", "Дедлайн подачі"
-            ]
             sentences = re.split(r"(?<=[.!?])\s+", raw_target)
             clean_sentences = []
             for s in sentences:
-                if any(marker.lower() in s.lower() for marker in junk_markers):
+                s = s.strip()
+                if not s:
+                    continue
+                if is_junk(s):
                     break
-                if s.strip():
-                    clean_sentences.append(s.strip())
-                if len(clean_sentences) >= 2:
-                    break
+                clean_sentences.append(s)
             target = " ".join(clean_sentences).strip()
             if len(target) > 400:
                 target = target[:400] + "..."
 
-        # Короткий опис
+        # Деталі / короткий опис — перший змістовний абзац вступного тексту.
+        # Він йде після рекламного блоку ("Подати заявку ТУТ" / "ЗАМОВИТИ ОФОРМЛЕННЯ...")
+        # і до заголовка "Для кого".
         summary = ""
-        if "Сума" in text:
-            after_sum = text.split("Сума", 1)[1]
-            paragraphs = re.split(r"\.\s+", after_sum)
-            for p in paragraphs:
-                p = p.strip()
-                if len(p) < 80:
-                    continue
-                if "Ми допомагаємо" in p:
-                    continue
-                if "Замовити" in p:
-                    continue
-                if "Подати заявку" in p:
-                    continue
-                if "ШКОЛА ГРАНТОЗНАВСТВА" in p:
-                    continue
-                summary = p
-                break
+        search_zone = text
+
+        # Відрізаємо все ДО рекламного маркера на початку сторінки
+        # (ДЕДЛАЙН/ДЕ/ГАЛУЗІ + "Ми допомагаємо" + кнопка замовлення) —
+        # опис гранту починається після нього.
+        # Шукаємо лише в межах тексту ДО заголовка "Для кого" (там можуть бути
+        # повторні згадки "Подати заявку ТУТ" вже після Суми/Дедлайну).
+        for_kogo_match = re.search(r"Для кого", search_zone, re.IGNORECASE)
+        for_kogo_pos = for_kogo_match.start() if for_kogo_match else len(search_zone)
+
+        intro_markers = [
+            r"Замовити оформлення грантової заявки",
+            r"Подати заявку ТУТ",
+        ]
+        last_cut = 0
+        head_zone = search_zone[:for_kogo_pos]
+        for marker in intro_markers:
+            m = list(re.finditer(marker, head_zone, re.IGNORECASE))
+            if m:
+                last_cut = max(last_cut, m[-1].end())
+
+        search_zone = search_zone[last_cut:for_kogo_pos]
+
+        paragraphs = re.split(r"(?<=[.!?])\s+", search_zone)
+        for p in paragraphs:
+            p = p.strip()
+            if len(p) < 80:
+                continue
+            if is_junk(p):
+                continue
+            summary = p
+            break
 
         if not summary:
             summary = title
