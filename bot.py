@@ -32,10 +32,16 @@ for entry in reversed(entries):
     title = entry.title.strip()
     link = entry.link
 
-if link in posted_links:
-    continue
+    if link in posted_links:
+        continue
 
-print(f"Processing: {title}")
+    print(f"Processing: {title}")
+
+    try:
+
+        page = requests.get(link, timeout=30)
+
+        soup = BeautifulSoup(page.text, "html.parser")
 
 try:
 
