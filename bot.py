@@ -18,10 +18,10 @@ if not feed.entries:
 # Завантажуємо список вже опублікованих грантів
 
 try:
-with open("posted_links.txt", "r", encoding="utf-8") as f:
-posted_links = set(f.read().splitlines())
+    with open("posted_links.txt", "r", encoding="utf-8") as f:
+        posted_links = set(f.read().splitlines())
 except:
-posted_links = set()
+    posted_links = set()
 
 # Перевіряємо останні 10 грантів
 
