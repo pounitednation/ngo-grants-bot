@@ -141,7 +141,6 @@ try:
         summary = summary[:800] + "..."
 
     message = f"""
-```
 
 🌍 <b>{title}</b>
 
@@ -152,18 +151,14 @@ try:
 🎯 <b>Галузі:</b> {sectors}
 """
 
-```
     if target:
         message += f"""
-```
 
 👥 <b>Для кого:</b>
 {target}
 """
 
-```
     message += f"""
-```
 
 💡 <b>Коротко:</b>
 
@@ -172,7 +167,6 @@ try:
 🔗 <a href="{link}">Деталі гранту</a>
 """
 
-```
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
     response = requests.post(
