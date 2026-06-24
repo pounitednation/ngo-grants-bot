@@ -37,12 +37,6 @@ for entry in reversed(entries):
 
     print(f"Processing: {title}")
 
-    try:
-
-        page = requests.get(link, timeout=30)
-
-        soup = BeautifulSoup(page.text, "html.parser")
-
 try:
 
     page = requests.get(link, timeout=30)
