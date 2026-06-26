@@ -4,179 +4,328 @@ import feedparser
 import requests
 from bs4 import BeautifulSoup
 
-RSS_URL = "https://chaszmin.com.ua/category/granty-tut/feed/"
 BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+POSTED_LINKS_FILE = "posted_links.txt"
 
-feed = feedparser.parse(RSS_URL)
-if not feed.entries:
-    print("No entries")
-    exit()
+# Джерела
+CHASZMIN_RSS = "https://chaszmin.com.ua/category/granty-tut/feed/"
+GURT_RSS = "https://gurt.org.ua/rss/section/grants/"
+PROSTIR_RSS = "https://www.prostir.ua/?feed=rss2&post_type=grants"
 
-# Завантажуємо список вже опублікованих грантів
-try:
-    with open("posted_links.txt", "r", encoding="utf-8") as f:
-        posted_links = set(f.read().splitlines())
-except FileNotFoundError:
-    posted_links = set()
+# Ключові слова в заголовку, за якими відсіюємо тендери/закупівлі техніки/послуг
+# на сайтах, де гранти й тендери змішані в одній стрічці (GURT, Prostir.ua)
+EXCLUDE_TITLE_KEYWORDS = [
+    "тендер", "закупівл", "запит цінових пропозицій", "зцп", "rfq", "rfp",
+    "rfi", "itb", "цінової пропозиції", "тендерн", "постачання", "поставк",
+]
 
-# Перевіряємо останні 10 грантів
-entries = feed.entries[:10]
 
-for entry in reversed(entries):
-    title = entry.title.strip()
-    link = entry.link
+def is_excluded_title(title: str) -> bool:
+    t = title.lower()
+    return any(kw in t for kw in EXCLUDE_TITLE_KEYWORDS)
 
-    if link in posted_links:
-        continue
 
-    print(f"Processing: {title}")
-
+def load_posted_links() -> set:
     try:
-        page = requests.get(link, timeout=30)
-        soup = BeautifulSoup(page.text, "html.parser")
-        article = soup.find("article")
-        text = article.get_text(" ", strip=True) if article else soup.get_text(" ", strip=True)
+        with open(POSTED_LINKS_FILE, "r", encoding="utf-8") as f:
+            return set(f.read().splitlines())
+    except FileNotFoundError:
+        return set()
 
-        # Дедлайн
-        deadline = "не зазначено"
-        match = re.search(
-            r"ДЕДЛАЙН:\s*(.*?)\s*(ДЕ:|ГАЛУЗІ:)",
-            text,
-            re.IGNORECASE
-        )
-        if match:
-            deadline = match.group(1).strip()
 
-        # Де
-        location = "не зазначено"
-        match = re.search(
-            r"ДЕ:\s*(.*?)\s*ГАЛУЗІ:",
-            text,
-            re.IGNORECASE
-        )
-        if match:
-            location = match.group(1).strip()
+def save_posted_link(link: str) -> None:
+    with open(POSTED_LINKS_FILE, "a", encoding="utf-8") as f:
+        f.write(link + "\n")
 
-        # Галузі
-        sectors = "не зазначено"
-        match = re.search(
-            r"ГАЛУЗІ:\s*(.*?)(Ми допомагаємо|Сума|Для кого|$)",
-            text,
-            re.IGNORECASE
-        )
-        if match:
-            sectors = match.group(1).strip()
 
-        # Маркери сторонніх рекламних блоків, які треба відкидати
-        junk_markers = [
-            "ПІДРУЧНИК", "ПОСІБНИК", "ПОРАДНИК", "КАТАЛОГ ФОНДІВ",
-            "ШКОЛА ГРАНТОЗНАВСТВА", "Подати заявку ТУТ", "HOW TO GET",
-            "Можливо, ви захочете", "Замовити оформлення",
-            "Ми допомагаємо в оформленні"
-        ]
+def send_telegram_message(message: str) -> requests.Response:
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    response = requests.post(
+        url,
+        data={
+            "chat_id": CHAT_ID,
+            "text": message,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": False,
+        },
+    )
+    print(response.text)
+    return response
 
-        def is_junk(sentence):
-            return any(marker.lower() in sentence.lower() for marker in junk_markers)
 
-        # Для кого — беремо абзац-пояснення одразу після заголовка "Для кого",
-        # до наступного заголовка ("До участі допускаються" / "Сума" / "Дедлайн")
-        target = ""
-        match = re.search(
-            r"Для кого[:\s]*(.*?)(До участі допускаються|Сума|Дедлайн[:\s]|$)",
-            text,
-            re.IGNORECASE
-        )
-        if match:
-            raw_target = match.group(1).strip()
-            sentences = re.split(r"(?<=[.!?])\s+", raw_target)
-            clean_sentences = []
-            for s in sentences:
-                s = s.strip()
-                if not s:
-                    continue
-                if is_junk(s):
-                    break
-                clean_sentences.append(s)
-            target = " ".join(clean_sentences).strip()
-            if len(target) > 400:
-                target = target[:400] + "..."
+# ---------------------------------------------------------------------------
+# CHASZMIN — повний формат (Дедлайн / Де / Галузі / Для кого / Деталі)
+# ---------------------------------------------------------------------------
 
-        # Деталі / короткий опис — перший змістовний абзац вступного тексту.
-        # Він йде після рекламного блоку ("Подати заявку ТУТ" / "ЗАМОВИТИ ОФОРМЛЕННЯ...")
-        # і до заголовка "Для кого".
-        summary = ""
-        search_zone = text
+JUNK_MARKERS = [
+    "ПІДРУЧНИК", "ПОСІБНИК", "ПОРАДНИК", "КАТАЛОГ ФОНДІВ",
+    "ШКОЛА ГРАНТОЗНАВСТВА", "Подати заявку ТУТ", "HOW TO GET",
+    "Можливо, ви захочете", "Замовити оформлення",
+    "Ми допомагаємо в оформленні",
+]
 
-        # Відрізаємо все ДО рекламного маркера на початку сторінки
-        # (ДЕДЛАЙН/ДЕ/ГАЛУЗІ + "Ми допомагаємо" + кнопка замовлення) —
-        # опис гранту починається після нього.
-        # Шукаємо лише в межах тексту ДО заголовка "Для кого" (там можуть бути
-        # повторні згадки "Подати заявку ТУТ" вже після Суми/Дедлайну).
-        for_kogo_match = re.search(r"Для кого", search_zone, re.IGNORECASE)
-        for_kogo_pos = for_kogo_match.start() if for_kogo_match else len(search_zone)
 
-        intro_markers = [
-            r"Замовити оформлення грантової заявки",
-            r"Подати заявку ТУТ",
-        ]
-        last_cut = 0
-        head_zone = search_zone[:for_kogo_pos]
-        for marker in intro_markers:
-            m = list(re.finditer(marker, head_zone, re.IGNORECASE))
-            if m:
-                last_cut = max(last_cut, m[-1].end())
+def is_junk(sentence: str) -> bool:
+    return any(marker.lower() in sentence.lower() for marker in JUNK_MARKERS)
 
-        search_zone = search_zone[last_cut:for_kogo_pos]
 
-        paragraphs = re.split(r"(?<=[.!?])\s+", search_zone)
-        for p in paragraphs:
-            p = p.strip()
-            if len(p) < 80:
+def process_chaszmin_entry(title: str, link: str) -> str:
+    page = requests.get(link, timeout=30)
+    soup = BeautifulSoup(page.text, "html.parser")
+    article = soup.find("article")
+    text = article.get_text(" ", strip=True) if article else soup.get_text(" ", strip=True)
+
+    # Дедлайн
+    deadline = "не зазначено"
+    match = re.search(r"ДЕДЛАЙН:\s*(.*?)\s*(ДЕ:|ГАЛУЗІ:)", text, re.IGNORECASE)
+    if match:
+        deadline = match.group(1).strip()
+
+    # Де
+    location = "не зазначено"
+    match = re.search(r"ДЕ:\s*(.*?)\s*ГАЛУЗІ:", text, re.IGNORECASE)
+    if match:
+        location = match.group(1).strip()
+
+    # Галузі
+    sectors = "не зазначено"
+    match = re.search(
+        r"ГАЛУЗІ:\s*(.*?)(Ми допомагаємо|Сума|Для кого|$)", text, re.IGNORECASE
+    )
+    if match:
+        sectors = match.group(1).strip()
+
+    # Для кого — абзац-пояснення одразу після заголовка "Для кого",
+    # до наступного заголовка ("До участі допускаються" / "Сума" / "Дедлайн")
+    target = ""
+    match = re.search(
+        r"Для кого[:\s]*(.*?)(До участі допускаються|Сума|Дедлайн[:\s]|$)",
+        text,
+        re.IGNORECASE,
+    )
+    if match:
+        raw_target = match.group(1).strip()
+        sentences = re.split(r"(?<=[.!?])\s+", raw_target)
+        clean_sentences = []
+        for s in sentences:
+            s = s.strip()
+            if not s:
                 continue
-            if is_junk(p):
-                continue
-            summary = p
-            break
+            if is_junk(s):
+                break
+            clean_sentences.append(s)
+        target = " ".join(clean_sentences).strip()
+        if len(target) > 400:
+            target = target[:400] + "..."
 
-        if not summary:
-            summary = title
-        if len(summary) > 800:
-            summary = summary[:800] + "..."
+    # Деталі — перший змістовний абзац вступного тексту: після рекламного
+    # блоку ("Подати заявку ТУТ" / "ЗАМОВИТИ ОФОРМЛЕННЯ...") і до "Для кого"
+    search_zone = text
+    for_kogo_match = re.search(r"Для кого", search_zone, re.IGNORECASE)
+    for_kogo_pos = for_kogo_match.start() if for_kogo_match else len(search_zone)
 
-        message = f"""
+    intro_markers = [r"Замовити оформлення грантової заявки", r"Подати заявку ТУТ"]
+    last_cut = 0
+    head_zone = search_zone[:for_kogo_pos]
+    for marker in intro_markers:
+        m = list(re.finditer(marker, head_zone, re.IGNORECASE))
+        if m:
+            last_cut = max(last_cut, m[-1].end())
+
+    search_zone = search_zone[last_cut:for_kogo_pos]
+
+    summary = ""
+    paragraphs = re.split(r"(?<=[.!?])\s+", search_zone)
+    for p in paragraphs:
+        p = p.strip()
+        if len(p) < 80:
+            continue
+        if is_junk(p):
+            continue
+        summary = p
+        break
+
+    if not summary:
+        summary = title
+    if len(summary) > 800:
+        summary = summary[:800] + "..."
+
+    message = f"""
 🌍 <b>{title}</b>
 📅 <b>Дедлайн:</b> {deadline}
 🌍 <b>Де:</b> {location}
 🎯 <b>Галузі:</b> {sectors}
 """
-        if target:
-            message += f"""
+    if target:
+        message += f"""
 👥 <b>Для кого:</b>
 {target}
 """
-        message += f"""
+    message += f"""
 💡 <b>Деталі:</b>
 {summary}
 🔗 <a href="{link}">Деталі гранту</a>
 """
+    return message
 
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        response = requests.post(
-            url,
-            data={
-                "chat_id": CHAT_ID,
-                "text": message,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": False
-            }
-        )
-        print(response.text)
 
-        if response.status_code == 200:
-            with open("posted_links.txt", "a", encoding="utf-8") as f:
-                f.write(link + "\n")
+def run_chaszmin(posted_links: set) -> None:
+    feed = feedparser.parse(CHASZMIN_RSS)
+    if not feed.entries:
+        print("[chaszmin] No entries")
+        return
 
-    except Exception as e:
-        print(f"ERROR processing {link}: {e}")
-        continue
+    entries = feed.entries[:10]
+    for entry in reversed(entries):
+        title = entry.title.strip()
+        link = entry.link
+
+        if link in posted_links:
+            continue
+
+        print(f"[chaszmin] Processing: {title}")
+
+        try:
+            message = process_chaszmin_entry(title, link)
+            response = send_telegram_message(message)
+            if response.status_code == 200:
+                save_posted_link(link)
+                posted_links.add(link)
+        except Exception as e:
+            print(f"[chaszmin] ERROR processing {link}: {e}")
+            continue
+
+
+# ---------------------------------------------------------------------------
+# GURT / PROSTIR — спрощений формат (назва + короткий опис + дедлайн якщо
+# знайдеться + лінк). Контент тут не структурований, тож деталі й "для кого"
+# беремо лише в межах вже готового короткого опису з самого RSS.
+# ---------------------------------------------------------------------------
+
+DEADLINE_PATTERNS = [
+    r"[Дд]едлайн[а-яіїєʼ'\s:]*[:\s]+([^.\n]{3,80})",
+    r"[Кк]інцевий термін[а-яіїєʼ'\s]*[:\s]+([^.\n]{3,80})",
+    r"[Тт]ермін подачі[а-яіїєʼ'\s]*[:\s]+([^.\n]{3,80})",
+    r"[Тт]ермін подання[а-яіїєʼ'\s]*[:\s]+([^.\n]{3,80})",
+]
+
+
+def extract_deadline(text: str) -> str:
+    for pattern in DEADLINE_PATTERNS:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            return match.group(1).strip().rstrip(".,;")
+    return ""
+
+
+def clean_html_description(raw_html: str) -> str:
+    """Прибирає HTML-теги й зайві пробіли з опису фіда (description/summary)."""
+    soup = BeautifulSoup(raw_html, "html.parser")
+    text = soup.get_text(" ", strip=True)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+# Дайджести ГУРТ і Prostir.ua часто містять кілька грантів/тендерів/вакансій
+# в одному RSS-пості, розділених послідовністю ">>>>" (чи її варіаціями
+# на кшталт "> > > >", "››››" тощо — на випадок дрібних відмінностей вёрстки)
+DIGEST_SPLIT_PATTERN = re.compile(r"\s*>{2,}\s*|\s*›{2,}\s*")
+
+
+def split_digest_into_items(description: str) -> list:
+    """Розбиває текст дайджесту на окремі смислові пункти.
+
+    Якщо роздільника немає — повертає весь текст як один пункт
+    (звичайна, не-дайджест новина).
+    """
+    parts = DIGEST_SPLIT_PATTERN.split(description)
+    items = [p.strip() for p in parts if p.strip()]
+    return items if items else [description.strip()]
+
+
+def make_item_title(item_text: str, fallback_title: str, max_len: int = 90) -> str:
+    """Заголовок для окремого пункту дайджесту — перше речення тексту."""
+    first_sentence = re.split(r"(?<=[.!?])\s+", item_text.strip())[0].strip()
+    if not first_sentence:
+        return fallback_title
+    if len(first_sentence) > max_len:
+        first_sentence = first_sentence[:max_len].rstrip() + "..."
+    return first_sentence
+
+
+def build_simple_message(item_title: str, link: str, description: str, source_label: str) -> str:
+    deadline = extract_deadline(description)
+
+    summary = description
+    if len(summary) > 600:
+        summary = summary[:600] + "..."
+
+    message = f"📌 <b>{item_title}</b>\n"
+    if deadline:
+        message += f"📅 <b>Дедлайн:</b> {deadline}\n"
+    message += f"\n{summary}\n\n🔗 <a href=\"{link}\">{source_label}</a>\n"
+    return message
+
+
+def run_simple_source(rss_url: str, source_label: str, posted_links: set, limit: int = 10) -> None:
+    feed = feedparser.parse(rss_url)
+    if not feed.entries:
+        print(f"[{source_label}] No entries")
+        return
+
+    entries = feed.entries[:limit]
+    for entry in reversed(entries):
+        post_title = entry.title.strip()
+        link = entry.link
+
+        raw_description = getattr(entry, "description", "") or getattr(entry, "summary", "")
+        description = clean_html_description(raw_description)
+        if not description:
+            description = post_title
+
+        items = split_digest_into_items(description)
+
+        for idx, item_text in enumerate(items):
+            # Унікальний ключ анти-дублікату для кожного пункту дайджесту:
+            # окремого URL для пункту немає, тож комбінуємо лінк посту + індекс
+            item_key = f"{link}#{idx}"
+
+            if item_key in posted_links:
+                continue
+
+            item_title = make_item_title(item_text, post_title)
+
+            if is_excluded_title(item_title) or is_excluded_title(item_text[:200]):
+                print(f"[{source_label}] Skipped (тендер/закупівля): {item_title}")
+                save_posted_link(item_key)
+                posted_links.add(item_key)
+                continue
+
+            print(f"[{source_label}] Processing: {item_title}")
+
+            try:
+                message = build_simple_message(item_title, link, item_text, source_label)
+                response = send_telegram_message(message)
+                if response.status_code == 200:
+                    save_posted_link(item_key)
+                    posted_links.add(item_key)
+            except Exception as e:
+                print(f"[{source_label}] ERROR processing {item_key}: {e}")
+                continue
+
+
+# ---------------------------------------------------------------------------
+# MAIN
+# ---------------------------------------------------------------------------
+
+def main():
+    posted_links = load_posted_links()
+
+    run_chaszmin(posted_links)
+    run_simple_source(GURT_RSS, "ГУРТ — джерело", posted_links)
+    run_simple_source(PROSTIR_RSS, "Громадський Простір — джерело", posted_links)
+
+
+if __name__ == "__main__":
+    main()
