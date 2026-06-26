@@ -4,7 +4,13 @@ on:
   workflow_dispatch:
 
   schedule:
+  # Дві некруглі хвилини, розведені на протилежні половини години.
+  # GitHub Actions найбільше навантажений рівно на :00 і :30 (і взагалі
+  # на круглих 5/10-хвилинних позначках), тож обидва значення обрані
+  # подалі від них — це не гарантує точний час, але знижує шанс,
+  # що ОБИДВА запуски в одну годину потраплять у пікове навантаження.
   - cron: '23 * * * *'
+  - cron: '53 * * * *'
 jobs:
   run-bot:
     runs-on: ubuntu-latest
@@ -32,7 +38,7 @@ jobs:
         run: |
           python bot.py
 
-      - name: Commit last_post
+      - name: Commit posted_links
         uses: stefanzweifel/git-auto-commit-action@v7
         with:
-          commit_message: Update last_post
+          commit_message: Update posted_links
