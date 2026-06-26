@@ -13,17 +13,48 @@ CHASZMIN_RSS = "https://chaszmin.com.ua/category/granty-tut/feed/"
 GURT_RSS = "https://gurt.org.ua/rss/section/grants/"
 PROSTIR_RSS = "https://www.prostir.ua/?feed=rss2&post_type=grants"
 
-# Ключові слова в заголовку, за якими відсіюємо тендери/закупівлі техніки/послуг
-# на сайтах, де гранти й тендери змішані в одній стрічці (GURT, Prostir.ua)
-EXCLUDE_TITLE_KEYWORDS = [
+# Ключові слова, за якими відсіюємо тендери/закупівлі техніки/послуг
+# на сайтах, де гранти й тендери змішані в одній стрічці (GURT, Prostir.ua).
+# На Prostir.ua тендери часто маскуються під нейтральні заголовки
+# ("Організація запрошує...", "Асоціація... запрошує...") — слова
+# "тендер"/"закупівля" там часто немає взагалі ні в заголовку, ні в
+# description, тож додано специфічну термінологію цінових тендерів:
+# "Постачальник", "разовий договір", "цінова пропозиція", "Замовник",
+# "конкурсні торги" тощо.
+EXCLUDE_KEYWORDS = [
     "тендер", "закупівл", "запит цінових пропозицій", "зцп", "rfq", "rfp",
     "rfi", "itb", "цінової пропозиції", "тендерн", "постачання", "поставк",
+    "цінову пропозицію", "цінові пропозиції", "цінових пропозицій",
+    "конкурсні торги", "разовий договір", "разового договору",
+    "постачальник", "оцінка цінових пропозицій",
 ]
 
 
 def is_excluded_title(title: str) -> bool:
     t = title.lower()
-    return any(kw in t for kw in EXCLUDE_TITLE_KEYWORDS)
+    return any(kw in t for kw in EXCLUDE_KEYWORDS)
+
+
+def is_excluded_text(text: str) -> bool:
+    """Перевіряє повний текст пункту (без обмеження довжини) — деякі
+    маркери тендеру можуть стояти не на початку абзацу."""
+    t = text.lower()
+    return any(kw in t for kw in EXCLUDE_KEYWORDS)
+
+
+# Деякі організації на Prostir.ua систематично публікують ЛИШЕ тендери
+# на закупівлю товарів/послуг (а не гранти), і їхній RSS-уривок іноді
+# обрізається ще до того, як з'являється слово "тендер"/"конкурсні торги".
+# У такому випадку фільтр за ключовими словами в тексті спрацювати не
+# встигає — тож такі організації відсіюємо за згадкою назви напряму.
+EXCLUDE_ORGANIZATIONS = [
+    "конвіктус україна",
+]
+
+
+def is_excluded_organization(text: str) -> bool:
+    t = text.lower()
+    return any(org in t for org in EXCLUDE_ORGANIZATIONS)
 
 
 def load_posted_links() -> set:
@@ -296,7 +327,11 @@ def run_simple_source(rss_url: str, source_label: str, posted_links: set, limit:
 
             item_title = make_item_title(item_text, post_title)
 
-            if is_excluded_title(item_title) or is_excluded_title(item_text[:200]):
+            if (
+                is_excluded_title(item_title)
+                or is_excluded_text(item_text)
+                or is_excluded_organization(item_text)
+            ):
                 print(f"[{source_label}] Skipped (тендер/закупівля): {item_title}")
                 save_posted_link(item_key)
                 posted_links.add(item_key)
