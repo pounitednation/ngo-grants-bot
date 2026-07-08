@@ -27,6 +27,9 @@ EXCLUDE_KEYWORDS = [
     "цінову пропозицію", "цінові пропозиції", "цінових пропозицій",
     "конкурсні торги", "разовий договір", "разового договору",
     "постачальник", "оцінка цінових пропозицій",
+    "місцева закупівля", "procurement", "запрошує подати пропозиц",
+    "запрошує надати пропозиц", "надати цінову пропозиц",
+    "запрошує кваліфікованих виконавц", "запрошує постачальник",
 ]
 
 
@@ -299,7 +302,7 @@ def build_simple_message(item_title: str, link: str, description: str, source_la
     return message
 
 
-def run_simple_source(rss_url: str, source_label: str, posted_links: set, limit: int = 10) -> None:
+def run_simple_source(rss_url: str, source_label: str, posted_links: set, limit: int = 20) -> None:
     feed = feedparser.parse(rss_url)
     if not feed.entries:
         print(f"[{source_label}] No entries")
@@ -315,6 +318,20 @@ def run_simple_source(rss_url: str, source_label: str, posted_links: set, limit:
         if not description:
             description = post_title
 
+        # Фільтруємо за реальним RSS-заголовком ще ДО розбиття на пункти:
+        # якщо сам заголовок запису — тендер, весь пост відкидаємо одразу
+        if (
+            is_excluded_title(post_title)
+            or is_excluded_text(post_title)
+            or is_excluded_organization(post_title)
+        ):
+            item_key = f"{link}#post"
+            if item_key not in posted_links:
+                print(f"[{source_label}] Skipped by RSS title (тендер): {post_title}")
+                save_posted_link(f"{link}#0")   # маркуємо першим пунктом щоб не повторювати
+                posted_links.add(f"{link}#0")
+            continue
+
         items = split_digest_into_items(description)
 
         for idx, item_text in enumerate(items):
@@ -328,7 +345,8 @@ def run_simple_source(rss_url: str, source_label: str, posted_links: set, limit:
             item_title = make_item_title(item_text, post_title)
 
             if (
-                is_excluded_title(item_title)
+                is_excluded_title(post_title)
+                or is_excluded_title(item_title)
                 or is_excluded_text(item_text)
                 or is_excluded_organization(item_text)
             ):
