@@ -349,14 +349,77 @@ def fetch_html(url: str, timeout: int = 30) -> BeautifulSoup | None:
         return None
 
 
+UKRAINIAN_MONTHS = {
+    "січня": 1, "лютого": 2, "березня": 3, "квітня": 4,
+    "травня": 5, "червня": 6, "липня": 7, "серпня": 8,
+    "вересня": 9, "жовтня": 10, "листопада": 11, "грудня": 12,
+    "січень": 1, "лютий": 2, "березень": 3, "квітень": 4,
+    "травень": 5, "червень": 6, "липень": 7, "серпень": 8,
+    "вересень": 9, "жовтень": 10, "листопад": 11, "грудень": 12,
+}
+
+
+def is_deadline_passed(deadline_str: str) -> bool:
+    """Повертає True, якщо дедлайн вже минув (порівнює з сьогоднішньою датою).
+
+    Розпізнає формати:
+    - "1 липня 2026 року" / "1 липня 2026"
+    - "01.07.2026" / "01/07/2026" / "01-07-2026"
+    - "July 1, 2026" / "1 July 2026"
+    Якщо дату розпізнати не вдалось — повертає False (публікуємо на всяк випадок).
+    """
+    from datetime import date
+    import re as _re
+
+    today = date.today()
+    text = deadline_str.strip().lower()
+
+    # Формат: "1 липня 2026" або "1 липня 2026 року"
+    match = _re.search(
+        r"(\d{1,2})\s+(" + "|".join(UKRAINIAN_MONTHS.keys()) + r")\s+(\d{4})",
+        text
+    )
+    if match:
+        try:
+            day = int(match.group(1))
+            month = UKRAINIAN_MONTHS[match.group(2)]
+            year = int(match.group(3))
+            return date(year, month, day) < today
+        except ValueError:
+            pass
+
+    # Формат: "01.07.2026" / "01/07/2026" / "01-07-2026"
+    match = _re.search(r"(\d{1,2})[./\-](\d{1,2})[./\-](\d{4})", text)
+    if match:
+        try:
+            day, month, year = int(match.group(1)), int(match.group(2)), int(match.group(3))
+            return date(year, month, day) < today
+        except ValueError:
+            pass
+
+    # Формат: "2026-07-01" (ISO)
+    match = _re.search(r"(\d{4})-(\d{2})-(\d{2})", text)
+    if match:
+        try:
+            year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
+            return date(year, month, day) < today
+        except ValueError:
+            pass
+
+    return False  # не вдалось розпізнати — публікуємо
+
+
 def run_isar(posted_links: set) -> None:
-    """ІСАР Єднання: читаємо меню 'Грантові конкурси' — кожен пункт = окремий конкурс."""
+    """ІСАР Єднання: читаємо меню 'Грантові конкурси'.
+
+    Увага: ІСАР не прибирає завершені конкурси з навігаційного меню одразу
+    після закриття дедлайну. Тому після завантаження сторінки конкурсу
+    перевіряємо дедлайн — якщо він у минулому, конкурс пропускаємо.
+    """
     soup = fetch_html(ISAR_URL)
     if not soup:
         return
 
-    # Навігація містить всі активні конкурси як пункти підменю
-    # href-и виду: /tryvaiut-hrantovi-konkursy/...
     links_found = set()
     for a in soup.find_all("a", href=True):
         href = a["href"]
@@ -371,33 +434,53 @@ def run_isar(posted_links: set) -> None:
         if link in posted_links:
             continue
         if is_excluded(title) or is_excluded(link):
-            print(f"[ІСАР] Skipped: {title}")
+            print(f"[ІСАР] Skipped (фільтр): {title}")
             save_posted_link(link)
             posted_links.add(link)
             continue
 
         print(f"[ІСАР] Processing: {title}")
         try:
-            # Заходимо на сторінку конкурсу за коротким описом
             page = fetch_html(link)
+            if not page:
+                continue
+
+            page_text = page.get_text(" ", strip=True)
+
+            # Перевіряємо дедлайн — якщо він у минулому, пропускаємо конкурс.
+            # extract_deadline повертає рядок типу "1 липня 2026 року" або "01.07.2026".
+            # Намагаємось розпізнати дату і порівняти з сьогодні.
+            deadline_str = extract_deadline(page_text)
+            if deadline_str and is_deadline_passed(deadline_str):
+                print(f"[ІСАР] Skipped (дедлайн минув: {deadline_str}): {title}")
+                save_posted_link(link)
+                posted_links.add(link)
+                continue
+
+            # Опис — перший змістовний абзац
             description = ""
-            if page:
-                content = page.find("div", class_=re.compile(r"item-page|article|content"))
-                if content:
-                    paragraphs = content.find_all("p")
-                    for p in paragraphs:
-                        text = p.get_text(" ", strip=True)
-                        if len(text) > 80:
-                            description = text[:600]
-                            break
+            content = page.find("div", class_=re.compile(r"item-page|article|content"))
+            if content:
+                for p in content.find_all("p"):
+                    text = p.get_text(" ", strip=True)
+                    if len(text) > 80:
+                        description = text[:600]
+                        break
             if not description:
                 description = title
 
-            deadline = extract_deadline(description)
             msg = f"📌 <b>{title}</b>\n"
-            if deadline:
-                msg += f"📅 <b>Дедлайн:</b> {deadline}\n"
+            if deadline_str:
+                msg += f"📅 <b>Дедлайн:</b> {deadline_str}\n"
             msg += f"\n{description}\n\n🔗 <a href=\"{link}\">ІСАР Єднання — джерело</a>\n"
+
+            response = send_telegram_message(msg)
+            if response.status_code == 200:
+                save_posted_link(link)
+                posted_links.add(link)
+            time.sleep(2)
+        except Exception as e:
+            print(f"[ІСАР] ERROR {link}: {e}")
 
             response = send_telegram_message(msg)
             if response.status_code == 200:
@@ -461,6 +544,14 @@ def run_irf(posted_links: set) -> None:
                 or "завершений конкурс" in page_text_lower
             ):
                 print(f"[МФВ] Skipped (завершений): {title}")
+                save_posted_link(link)
+                posted_links.add(link)
+                continue
+
+            # Також перевіряємо дедлайн по даті
+            deadline_str = extract_deadline(page.get_text(" ", strip=True))
+            if deadline_str and is_deadline_passed(deadline_str):
+                print(f"[МФВ] Skipped (дедлайн минув: {deadline_str}): {title}")
                 save_posted_link(link)
                 posted_links.add(link)
                 continue
