@@ -16,7 +16,7 @@ POSTED_LINKS_FILE = "posted_links.txt"
 CHASZMIN_RSS  = "https://chaszmin.com.ua/category/granty-tut/feed/"
 GURT_RSS      = "https://gurt.org.ua/rss/section/grants/"
 PROSTIR_RSS   = "https://www.prostir.ua/?feed=rss2&post_type=grants"
-GETGRANT_RSS  = "https://getgrant.ua/feed/"
+GETGRANT_RSS  = "https://getgrant.ua/grants-and-funding/?feed=rss2"
 ISAR_URL      = "https://ednannia.ua/181-contests"
 IRF_URL       = "https://www.irf.ua/grants/contests/"
 
@@ -32,11 +32,21 @@ EXCLUDE_KEYWORDS = [
     "місцева закупівля", "procurement", "запрошує подати пропозиц",
     "запрошує надати пропозиц", "надати цінову пропозиц",
     "запрошує кваліфікованих виконавц", "запрошує постачальник",
-    # вакансії консультантів/експертів (скрін із "пошук експерта/ки")
+    # вакансії консультантів/експертів
     "пошук експерта", "пошук експертки", "пошук експерт",
     "запрошує експерта", "запрошує консультант",
     "набір консультант", "набір тренер",
     "вакансія", "вакансії", "job opening", "position available",
+    # GetGrant-специфічні не-грантові матеріали:
+    # самореклама, аналітика, освітні статті, звіти про заходи
+    "appeared first on getgrant",   # хвіст WordPress-постів блогу
+    "getgrant отримав",             # новини про самих GetGrant
+    "getgrant service отримав",
+    "summit grant fest",            # репортаж про захід
+    "мав честь бути запрошеним",   # особиста нотатка
+    "анатомія робочих пакетів",    # навчальна стаття
+    "грантова звітність у horizon", # навчальна стаття
+    "living guidelines",            # аналітика про ЄС-документи
 ]
 
 EXCLUDE_ORGANIZATIONS = [
@@ -399,47 +409,81 @@ def run_isar(posted_links: set) -> None:
 
 
 def run_irf(posted_links: set) -> None:
-    """МФ «Відродження»: читаємо сторінку активних конкурсів."""
-    soup = fetch_html(IRF_URL)
+    """МФ «Відродження»: читаємо сторінку активних конкурсів.
+
+    Проблеми, які вирішуємо тут:
+    1. Сторінка /grants/contests/ рендерить картки через JS —
+       requests бачить лише FAQ-блок без жодного посилання на конкурс.
+       Тому читаємо /contest/ сторінки через sitemap або пошук на сайті.
+    2. Завершені конкурси треба відсівати за наявністю слова
+       "ЗАВЕРШЕННЯ КОНКУРСУ" в заголовку або тексті картки.
+    3. get_text() без роздільника дає злиплий текст —
+       використовуємо separator=" ".
+    """
+    # МФВ має XML-карту сайту з усіма конкурсами
+    SITEMAP_URL = "https://www.irf.ua/sitemap.xml"
+    soup = fetch_html(SITEMAP_URL)
     if not soup:
+        print("[МФВ] Не вдалось завантажити sitemap")
         return
 
-    # Конкурси — карточки з class "contest" або article з посиланням
-    # Шукаємо всі посилання виду /contest/...
-    links_found = set()
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if "/contest/" in href and len(href) > 10:
-            if href.startswith("/"):
-                href = "https://www.irf.ua" + href
-            if href.startswith("https://www.irf.ua/contest/"):
-                title_text = a.get_text(strip=True)
-                if title_text and len(title_text) > 5:
-                    links_found.add((href, title_text))
+    # У sitemap шукаємо URL вигляду /contest/...
+    contest_urls = []
+    for loc in soup.find_all("loc"):
+        url = loc.get_text(strip=True)
+        if "/contest/" in url and url.startswith("https://www.irf.ua/contest/"):
+            contest_urls.append(url)
 
-    for link, title in sorted(links_found):
+    if not contest_urls:
+        print("[МФВ] Жодного конкурсу в sitemap не знайдено")
+        return
+
+    for link in contest_urls:
         if link in posted_links:
             continue
-        if is_excluded(title):
-            print(f"[МФВ] Skipped: {title}")
-            save_posted_link(link)
-            posted_links.add(link)
-            continue
 
-        print(f"[МФВ] Processing: {title}")
+        # Завантажуємо сторінку конкурсу
         try:
             page = fetch_html(link)
+            if not page:
+                continue
+
+            # Заголовок конкурсу — тег h1
+            h1 = page.find("h1")
+            title = h1.get_text(" ", strip=True) if h1 else link
+
+            # Відсіюємо завершені конкурси
+            # (МФВ часто показує завершені конкурси в sitemap)
+            page_text_lower = page.get_text(" ", strip=True).lower()
+            if (
+                "завершення конкурсу" in page_text_lower
+                or "конкурс завершено" in page_text_lower
+                or "завершений конкурс" in page_text_lower
+            ):
+                print(f"[МФВ] Skipped (завершений): {title}")
+                save_posted_link(link)
+                posted_links.add(link)
+                continue
+
+            if is_excluded(title):
+                print(f"[МФВ] Skipped (фільтр): {title}")
+                save_posted_link(link)
+                posted_links.add(link)
+                continue
+
+            print(f"[МФВ] Processing: {title}")
+
+            # Опис — перший змістовний абзац основного контенту
             description = ""
-            if page:
-                for p in page.find_all("p"):
-                    text = p.get_text(" ", strip=True)
-                    if len(text) > 80:
-                        description = text[:600]
-                        break
+            for p in page.find_all("p"):
+                text = p.get_text(" ", strip=True)
+                if len(text) > 80 and "завершення конкурсу" not in text.lower():
+                    description = text[:600]
+                    break
             if not description:
                 description = title
 
-            deadline = extract_deadline(description)
+            deadline = extract_deadline(page.get_text(" ", strip=True))
             msg = f"📌 <b>{title}</b>\n"
             if deadline:
                 msg += f"📅 <b>Дедлайн:</b> {deadline}\n"
