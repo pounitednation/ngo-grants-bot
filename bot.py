@@ -17,10 +17,6 @@ CHASZMIN_RSS  = "https://chaszmin.com.ua/category/granty-tut/feed/"
 GURT_RSS      = "https://gurt.org.ua/rss/section/grants/"
 PROSTIR_RSS   = "https://www.prostir.ua/?feed=rss2&post_type=grants"
 GETGRANT_RSS  = "https://getgrant.ua/grants-and-funding/?feed=rss2"
-# Grant-AV — WordPress, RSS теоретично є на /feed/, але сайт захищений Cloudflare.
-# Якщо GitHub Actions IP не заблоковано — буде працювати, інакше feedparser
-# поверне порожній список і функція просто нічого не зробить (це безпечно).
-GRANTAV_RSS   = "https://grant-av.com.ua/grants/feed/"
 ISAR_URL      = "https://ednannia.ua/181-contests"
 IRF_URL       = "https://www.irf.ua/grants/contests/"
 
@@ -343,6 +339,12 @@ def run_simple_source(rss_url: str, source_label: str, posted_links: set, limit:
 # ---------------------------------------------------------------------------
 
 def fetch_html(url: str, timeout: int = 30) -> BeautifulSoup | None:
+    import warnings
+    try:
+        from bs4 import XMLParsedAsHTMLWarning
+        warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+    except ImportError:
+        pass
     try:
         resp = requests.get(url, timeout=timeout,
                             headers={"User-Agent": "Mozilla/5.0 ngo-grants-bot/1.0"})
@@ -496,52 +498,72 @@ def run_isar(posted_links: set) -> None:
 
 
 def run_irf(posted_links: set) -> None:
-    """МФ «Відродження»: читаємо сторінку активних конкурсів.
+    """МФ «Відродження»: збираємо активні конкурси.
 
-    Проблеми, які вирішуємо тут:
-    1. Сторінка /grants/contests/ рендерить картки через JS —
-       requests бачить лише FAQ-блок без жодного посилання на конкурс.
-       Тому читаємо /contest/ сторінки через sitemap або пошук на сайті.
-    2. Завершені конкурси треба відсівати за наявністю слова
-       "ЗАВЕРШЕННЯ КОНКУРСУ" в заголовку або тексті картки.
-    3. get_text() без роздільника дає злиплий текст —
-       використовуємо separator=" ".
+    МФВ не має RSS. Sitemap захищений або має іншу структуру.
+    Стратегія: читаємо сторінку /grants/contests/ і шукаємо
+    всі посилання на /contest/... Якщо сторінка повернула
+    порожній HTML (JS-рендеринг) — спробуємо sitemap з xml-парсером.
     """
-    # МФВ має XML-карту сайту з усіма конкурсами
-    SITEMAP_URL = "https://www.irf.ua/sitemap.xml"
-    soup = fetch_html(SITEMAP_URL)
-    if not soup:
-        print("[МФВ] Не вдалось завантажити sitemap")
-        return
+    import xml.etree.ElementTree as ET
 
-    # У sitemap шукаємо URL вигляду /contest/...
     contest_urls = []
-    for loc in soup.find_all("loc"):
-        url = loc.get_text(strip=True)
-        if "/contest/" in url and url.startswith("https://www.irf.ua/contest/"):
-            contest_urls.append(url)
+
+    # Спроба 1: сторінка /grants/contests/ — шукаємо посилання
+    soup = fetch_html("https://www.irf.ua/grants/contests/")
+    if soup:
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if "/contest/" in href:
+                if href.startswith("/"):
+                    href = "https://www.irf.ua" + href
+                if href.startswith("https://www.irf.ua/contest/") and href not in contest_urls:
+                    contest_urls.append(href)
+
+    # Спроба 2: sitemap з правильним XML-парсером
+    if not contest_urls:
+        try:
+            import warnings
+            from bs4 import XMLParsedAsHTMLWarning
+            warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+
+            r = requests.get(
+                "https://www.irf.ua/sitemap.xml",
+                timeout=30,
+                headers={"User-Agent": "Mozilla/5.0 ngo-grants-bot/1.0"}
+            )
+            if r.status_code == 200:
+                root = ET.fromstring(r.content)
+                ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+                for loc in root.findall(".//sm:loc", ns):
+                    url = loc.text.strip() if loc.text else ""
+                    if url.startswith("https://www.irf.ua/contest/") and url not in contest_urls:
+                        contest_urls.append(url)
+        except Exception as e:
+            print(f"[МФВ] Sitemap error: {e}")
 
     if not contest_urls:
-        print("[МФВ] Жодного конкурсу в sitemap не знайдено")
+        print("[МФВ] Не вдалось знайти конкурси (сторінка і sitemap порожні)")
         return
+
+    print(f"[МФВ] Знайдено {len(contest_urls)} конкурсів")
 
     for link in contest_urls:
         if link in posted_links:
             continue
 
-        # Завантажуємо сторінку конкурсу
         try:
             page = fetch_html(link)
             if not page:
                 continue
 
-            # Заголовок конкурсу — тег h1
             h1 = page.find("h1")
             title = h1.get_text(" ", strip=True) if h1 else link
 
-            # Відсіюємо завершені конкурси
-            # (МФВ часто показує завершені конкурси в sitemap)
-            page_text_lower = page.get_text(" ", strip=True).lower()
+            page_text = page.get_text(" ", strip=True)
+            page_text_lower = page_text.lower()
+
+            # Відсіюємо завершені конкурси за текстом
             if (
                 "завершення конкурсу" in page_text_lower
                 or "конкурс завершено" in page_text_lower
@@ -552,15 +574,16 @@ def run_irf(posted_links: set) -> None:
                 posted_links.add(link)
                 continue
 
-            # Також перевіряємо дедлайн по даті
-            deadline_str = extract_deadline(page.get_text(" ", strip=True))
+            # Відсіюємо за дедлайном
+            deadline_str = extract_deadline(page_text)
             if deadline_str and is_deadline_passed(deadline_str):
                 print(f"[МФВ] Skipped (дедлайн минув: {deadline_str}): {title}")
                 save_posted_link(link)
                 posted_links.add(link)
                 continue
 
-            if is_excluded(title):
+            # Фільтр тендерів/закупівель
+            if is_excluded(title) or is_excluded(page_text[:300]):
                 print(f"[МФВ] Skipped (фільтр): {title}")
                 save_posted_link(link)
                 posted_links.add(link)
@@ -568,7 +591,6 @@ def run_irf(posted_links: set) -> None:
 
             print(f"[МФВ] Processing: {title}")
 
-            # Опис — перший змістовний абзац основного контенту
             description = ""
             for p in page.find_all("p"):
                 text = p.get_text(" ", strip=True)
@@ -578,10 +600,9 @@ def run_irf(posted_links: set) -> None:
             if not description:
                 description = title
 
-            deadline = extract_deadline(page.get_text(" ", strip=True))
             msg = f"📌 <b>{title}</b>\n"
-            if deadline:
-                msg += f"📅 <b>Дедлайн:</b> {deadline}\n"
+            if deadline_str:
+                msg += f"📅 <b>Дедлайн:</b> {deadline_str}\n"
             msg += f"\n{description}\n\n🔗 <a href=\"{link}\">МФ «Відродження» — джерело</a>\n"
 
             response = send_telegram_message(msg)
@@ -605,7 +626,6 @@ def main():
     run_simple_source(GURT_RSS,     "ГУРТ — джерело",                posted_links)
     run_simple_source(PROSTIR_RSS,  "Громадський Простір — джерело", posted_links)
     run_simple_source(GETGRANT_RSS, "GetGrant — джерело",            posted_links)
-    run_simple_source(GRANTAV_RSS,  "Грант АВ — джерело",            posted_links)
 
     # HTML-скрейпери
     run_isar(posted_links)
