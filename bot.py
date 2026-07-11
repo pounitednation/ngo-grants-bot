@@ -1,5 +1,7 @@
 import os
 import re
+import time
+import hashlib
 import feedparser
 import requests
 from bs4 import BeautifulSoup
@@ -8,19 +10,19 @@ BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 POSTED_LINKS_FILE = "posted_links.txt"
 
-# Джерела
-CHASZMIN_RSS = "https://chaszmin.com.ua/category/granty-tut/feed/"
-GURT_RSS = "https://gurt.org.ua/rss/section/grants/"
-PROSTIR_RSS = "https://www.prostir.ua/?feed=rss2&post_type=grants"
+# ---------------------------------------------------------------------------
+# ДЖЕРЕЛА
+# ---------------------------------------------------------------------------
+CHASZMIN_RSS  = "https://chaszmin.com.ua/category/granty-tut/feed/"
+GURT_RSS      = "https://gurt.org.ua/rss/section/grants/"
+PROSTIR_RSS   = "https://www.prostir.ua/?feed=rss2&post_type=grants"
+GETGRANT_RSS  = "https://getgrant.ua/feed/"
+ISAR_URL      = "https://ednannia.ua/181-contests"
+IRF_URL       = "https://www.irf.ua/grants/contests/"
 
-# Ключові слова, за якими відсіюємо тендери/закупівлі техніки/послуг
-# на сайтах, де гранти й тендери змішані в одній стрічці (GURT, Prostir.ua).
-# На Prostir.ua тендери часто маскуються під нейтральні заголовки
-# ("Організація запрошує...", "Асоціація... запрошує...") — слова
-# "тендер"/"закупівля" там часто немає взагалі ні в заголовку, ні в
-# description, тож додано специфічну термінологію цінових тендерів:
-# "Постачальник", "разовий договір", "цінова пропозиція", "Замовник",
-# "конкурсні торги" тощо.
+# ---------------------------------------------------------------------------
+# ФІЛЬТРИ — тендери / закупівлі / вакансії-консультантів
+# ---------------------------------------------------------------------------
 EXCLUDE_KEYWORDS = [
     "тендер", "закупівл", "запит цінових пропозицій", "зцп", "rfq", "rfp",
     "rfi", "itb", "цінової пропозиції", "тендерн", "постачання", "поставк",
@@ -30,35 +32,29 @@ EXCLUDE_KEYWORDS = [
     "місцева закупівля", "procurement", "запрошує подати пропозиц",
     "запрошує надати пропозиц", "надати цінову пропозиц",
     "запрошує кваліфікованих виконавц", "запрошує постачальник",
+    # вакансії консультантів/експертів (скрін із "пошук експерта/ки")
+    "пошук експерта", "пошук експертки", "пошук експерт",
+    "запрошує експерта", "запрошує консультант",
+    "набір консультант", "набір тренер",
+    "вакансія", "вакансії", "job opening", "position available",
 ]
 
-
-def is_excluded_title(title: str) -> bool:
-    t = title.lower()
-    return any(kw in t for kw in EXCLUDE_KEYWORDS)
-
-
-def is_excluded_text(text: str) -> bool:
-    """Перевіряє повний текст пункту (без обмеження довжини) — деякі
-    маркери тендеру можуть стояти не на початку абзацу."""
-    t = text.lower()
-    return any(kw in t for kw in EXCLUDE_KEYWORDS)
-
-
-# Деякі організації на Prostir.ua систематично публікують ЛИШЕ тендери
-# на закупівлю товарів/послуг (а не гранти), і їхній RSS-уривок іноді
-# обрізається ще до того, як з'являється слово "тендер"/"конкурсні торги".
-# У такому випадку фільтр за ключовими словами в тексті спрацювати не
-# встигає — тож такі організації відсіюємо за згадкою назви напряму.
 EXCLUDE_ORGANIZATIONS = [
     "конвіктус україна",
 ]
 
 
-def is_excluded_organization(text: str) -> bool:
+def is_excluded(text: str) -> bool:
     t = text.lower()
-    return any(org in t for org in EXCLUDE_ORGANIZATIONS)
+    return (
+        any(kw in t for kw in EXCLUDE_KEYWORDS)
+        or any(org in t for org in EXCLUDE_ORGANIZATIONS)
+    )
 
+
+# ---------------------------------------------------------------------------
+# ТРЕКІНГ ОПУБЛІКОВАНИХ ПОСИЛАНЬ
+# ---------------------------------------------------------------------------
 
 def load_posted_links() -> set:
     try:
@@ -72,6 +68,10 @@ def save_posted_link(link: str) -> None:
     with open(POSTED_LINKS_FILE, "a", encoding="utf-8") as f:
         f.write(link + "\n")
 
+
+# ---------------------------------------------------------------------------
+# TELEGRAM
+# ---------------------------------------------------------------------------
 
 def send_telegram_message(message: str) -> requests.Response:
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -110,33 +110,25 @@ def process_chaszmin_entry(title: str, link: str) -> str:
     article = soup.find("article")
     text = article.get_text(" ", strip=True) if article else soup.get_text(" ", strip=True)
 
-    # Дедлайн
     deadline = "не зазначено"
     match = re.search(r"ДЕДЛАЙН:\s*(.*?)\s*(ДЕ:|ГАЛУЗІ:)", text, re.IGNORECASE)
     if match:
         deadline = match.group(1).strip()
 
-    # Де
     location = "не зазначено"
     match = re.search(r"ДЕ:\s*(.*?)\s*ГАЛУЗІ:", text, re.IGNORECASE)
     if match:
         location = match.group(1).strip()
 
-    # Галузі
     sectors = "не зазначено"
-    match = re.search(
-        r"ГАЛУЗІ:\s*(.*?)(Ми допомагаємо|Сума|Для кого|$)", text, re.IGNORECASE
-    )
+    match = re.search(r"ГАЛУЗІ:\s*(.*?)(Ми допомагаємо|Сума|Для кого|$)", text, re.IGNORECASE)
     if match:
         sectors = match.group(1).strip()
 
-    # Для кого — абзац-пояснення одразу після заголовка "Для кого",
-    # до наступного заголовка ("До участі допускаються" / "Сума" / "Дедлайн")
     target = ""
     match = re.search(
         r"Для кого[:\s]*(.*?)(До участі допускаються|Сума|Дедлайн[:\s]|$)",
-        text,
-        re.IGNORECASE,
+        text, re.IGNORECASE,
     )
     if match:
         raw_target = match.group(1).strip()
@@ -153,8 +145,6 @@ def process_chaszmin_entry(title: str, link: str) -> str:
         if len(target) > 400:
             target = target[:400] + "..."
 
-    # Деталі — перший змістовний абзац вступного тексту: після рекламного
-    # блоку ("Подати заявку ТУТ" / "ЗАМОВИТИ ОФОРМЛЕННЯ...") і до "Для кого"
     search_zone = text
     for_kogo_match = re.search(r"Для кого", search_zone, re.IGNORECASE)
     for_kogo_pos = for_kogo_match.start() if for_kogo_match else len(search_zone)
@@ -166,7 +156,6 @@ def process_chaszmin_entry(title: str, link: str) -> str:
         m = list(re.finditer(marker, head_zone, re.IGNORECASE))
         if m:
             last_cut = max(last_cut, m[-1].end())
-
     search_zone = search_zone[last_cut:for_kogo_pos]
 
     summary = ""
@@ -209,17 +198,17 @@ def run_chaszmin(posted_links: set) -> None:
     if not feed.entries:
         print("[chaszmin] No entries")
         return
-
-    entries = feed.entries[:10]
-    for entry in reversed(entries):
+    for entry in reversed(feed.entries[:10]):
         title = entry.title.strip()
         link = entry.link
-
         if link in posted_links:
             continue
-
+        if is_excluded(title):
+            print(f"[chaszmin] Skipped: {title}")
+            save_posted_link(link)
+            posted_links.add(link)
+            continue
         print(f"[chaszmin] Processing: {title}")
-
         try:
             message = process_chaszmin_entry(title, link)
             response = send_telegram_message(message)
@@ -227,14 +216,11 @@ def run_chaszmin(posted_links: set) -> None:
                 save_posted_link(link)
                 posted_links.add(link)
         except Exception as e:
-            print(f"[chaszmin] ERROR processing {link}: {e}")
-            continue
+            print(f"[chaszmin] ERROR {link}: {e}")
 
 
 # ---------------------------------------------------------------------------
-# GURT / PROSTIR — спрощений формат (назва + короткий опис + дедлайн якщо
-# знайдеться + лінк). Контент тут не структурований, тож деталі й "для кого"
-# беремо лише в межах вже готового короткого опису з самого RSS.
+# СПІЛЬНІ УТИЛІТИ ДЛЯ RSS-ДЖЕРЕЛ (GURT / PROSTIR / GETGRANT)
 # ---------------------------------------------------------------------------
 
 DEADLINE_PATTERNS = [
@@ -254,32 +240,21 @@ def extract_deadline(text: str) -> str:
 
 
 def clean_html_description(raw_html: str) -> str:
-    """Прибирає HTML-теги й зайві пробіли з опису фіда (description/summary)."""
     soup = BeautifulSoup(raw_html, "html.parser")
     text = soup.get_text(" ", strip=True)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+    return re.sub(r"\s+", " ", text).strip()
 
 
-# Дайджести ГУРТ і Prostir.ua часто містять кілька грантів/тендерів/вакансій
-# в одному RSS-пості, розділених послідовністю ">>>>" (чи її варіаціями
-# на кшталт "> > > >", "››››" тощо — на випадок дрібних відмінностей вёрстки)
 DIGEST_SPLIT_PATTERN = re.compile(r"\s*>{2,}\s*|\s*›{2,}\s*")
 
 
 def split_digest_into_items(description: str) -> list:
-    """Розбиває текст дайджесту на окремі смислові пункти.
-
-    Якщо роздільника немає — повертає весь текст як один пункт
-    (звичайна, не-дайджест новина).
-    """
     parts = DIGEST_SPLIT_PATTERN.split(description)
     items = [p.strip() for p in parts if p.strip()]
     return items if items else [description.strip()]
 
 
 def make_item_title(item_text: str, fallback_title: str, max_len: int = 90) -> str:
-    """Заголовок для окремого пункту дайджесту — перше речення тексту."""
     first_sentence = re.split(r"(?<=[.!?])\s+", item_text.strip())[0].strip()
     if not first_sentence:
         return fallback_title
@@ -290,11 +265,7 @@ def make_item_title(item_text: str, fallback_title: str, max_len: int = 90) -> s
 
 def build_simple_message(item_title: str, link: str, description: str, source_label: str) -> str:
     deadline = extract_deadline(description)
-
-    summary = description
-    if len(summary) > 600:
-        summary = summary[:600] + "..."
-
+    summary = description[:600] + "..." if len(description) > 600 else description
     message = f"📌 <b>{item_title}</b>\n"
     if deadline:
         message += f"📅 <b>Дедлайн:</b> {deadline}\n"
@@ -308,55 +279,39 @@ def run_simple_source(rss_url: str, source_label: str, posted_links: set, limit:
         print(f"[{source_label}] No entries")
         return
 
-    entries = feed.entries[:limit]
-    for entry in reversed(entries):
+    for entry in reversed(feed.entries[:limit]):
         post_title = entry.title.strip()
         link = entry.link
-
         raw_description = getattr(entry, "description", "") or getattr(entry, "summary", "")
         description = clean_html_description(raw_description)
         if not description:
             description = post_title
 
-        # Фільтруємо за реальним RSS-заголовком ще ДО розбиття на пункти:
-        # якщо сам заголовок запису — тендер, весь пост відкидаємо одразу
-        if (
-            is_excluded_title(post_title)
-            or is_excluded_text(post_title)
-            or is_excluded_organization(post_title)
-        ):
-            item_key = f"{link}#post"
+        # Фільтр за RSS-заголовком ще до розбиття на пункти
+        if is_excluded(post_title):
+            item_key = f"{link}#0"
             if item_key not in posted_links:
-                print(f"[{source_label}] Skipped by RSS title (тендер): {post_title}")
-                save_posted_link(f"{link}#0")   # маркуємо першим пунктом щоб не повторювати
-                posted_links.add(f"{link}#0")
+                print(f"[{source_label}] Skipped by title: {post_title}")
+                save_posted_link(item_key)
+                posted_links.add(item_key)
             continue
 
         items = split_digest_into_items(description)
 
         for idx, item_text in enumerate(items):
-            # Унікальний ключ анти-дублікату для кожного пункту дайджесту:
-            # окремого URL для пункту немає, тож комбінуємо лінк посту + індекс
             item_key = f"{link}#{idx}"
-
             if item_key in posted_links:
                 continue
 
             item_title = make_item_title(item_text, post_title)
 
-            if (
-                is_excluded_title(post_title)
-                or is_excluded_title(item_title)
-                or is_excluded_text(item_text)
-                or is_excluded_organization(item_text)
-            ):
-                print(f"[{source_label}] Skipped (тендер/закупівля): {item_title}")
+            if is_excluded(post_title) or is_excluded(item_title) or is_excluded(item_text):
+                print(f"[{source_label}] Skipped item: {item_title}")
                 save_posted_link(item_key)
                 posted_links.add(item_key)
                 continue
 
             print(f"[{source_label}] Processing: {item_title}")
-
             try:
                 message = build_simple_message(item_title, link, item_text, source_label)
                 response = send_telegram_message(message)
@@ -364,8 +319,139 @@ def run_simple_source(rss_url: str, source_label: str, posted_links: set, limit:
                     save_posted_link(item_key)
                     posted_links.add(item_key)
             except Exception as e:
-                print(f"[{source_label}] ERROR processing {item_key}: {e}")
-                continue
+                print(f"[{source_label}] ERROR {item_key}: {e}")
+
+
+# ---------------------------------------------------------------------------
+# HTML-СКРЕЙПЕРИ (ІСАР Єднання / МФ «Відродження»)
+# Ці сайти не мають RSS, тому читаємо список активних конкурсів напряму.
+# Унікальний ключ — нормалізований URL сторінки конкурсу.
+# ---------------------------------------------------------------------------
+
+def fetch_html(url: str, timeout: int = 30) -> BeautifulSoup | None:
+    try:
+        resp = requests.get(url, timeout=timeout,
+                            headers={"User-Agent": "Mozilla/5.0 ngo-grants-bot/1.0"})
+        resp.raise_for_status()
+        return BeautifulSoup(resp.text, "html.parser")
+    except Exception as e:
+        print(f"[fetch_html] ERROR {url}: {e}")
+        return None
+
+
+def run_isar(posted_links: set) -> None:
+    """ІСАР Єднання: читаємо меню 'Грантові конкурси' — кожен пункт = окремий конкурс."""
+    soup = fetch_html(ISAR_URL)
+    if not soup:
+        return
+
+    # Навігація містить всі активні конкурси як пункти підменю
+    # href-и виду: /tryvaiut-hrantovi-konkursy/...
+    links_found = set()
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if "tryvaiut-hrantovi-konkursy/" in href and href != "/tryvaiut-hrantovi-konkursy":
+            if href.startswith("/"):
+                href = "https://ednannia.ua" + href
+            links_found.add((href, a.get_text(strip=True)))
+
+    for link, title in sorted(links_found):
+        if not title or len(title) < 5:
+            continue
+        if link in posted_links:
+            continue
+        if is_excluded(title) or is_excluded(link):
+            print(f"[ІСАР] Skipped: {title}")
+            save_posted_link(link)
+            posted_links.add(link)
+            continue
+
+        print(f"[ІСАР] Processing: {title}")
+        try:
+            # Заходимо на сторінку конкурсу за коротким описом
+            page = fetch_html(link)
+            description = ""
+            if page:
+                content = page.find("div", class_=re.compile(r"item-page|article|content"))
+                if content:
+                    paragraphs = content.find_all("p")
+                    for p in paragraphs:
+                        text = p.get_text(" ", strip=True)
+                        if len(text) > 80:
+                            description = text[:600]
+                            break
+            if not description:
+                description = title
+
+            deadline = extract_deadline(description)
+            msg = f"📌 <b>{title}</b>\n"
+            if deadline:
+                msg += f"📅 <b>Дедлайн:</b> {deadline}\n"
+            msg += f"\n{description}\n\n🔗 <a href=\"{link}\">ІСАР Єднання — джерело</a>\n"
+
+            response = send_telegram_message(msg)
+            if response.status_code == 200:
+                save_posted_link(link)
+                posted_links.add(link)
+            time.sleep(2)  # пауза між запитами до сайту
+        except Exception as e:
+            print(f"[ІСАР] ERROR {link}: {e}")
+
+
+def run_irf(posted_links: set) -> None:
+    """МФ «Відродження»: читаємо сторінку активних конкурсів."""
+    soup = fetch_html(IRF_URL)
+    if not soup:
+        return
+
+    # Конкурси — карточки з class "contest" або article з посиланням
+    # Шукаємо всі посилання виду /contest/...
+    links_found = set()
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if "/contest/" in href and len(href) > 10:
+            if href.startswith("/"):
+                href = "https://www.irf.ua" + href
+            if href.startswith("https://www.irf.ua/contest/"):
+                title_text = a.get_text(strip=True)
+                if title_text and len(title_text) > 5:
+                    links_found.add((href, title_text))
+
+    for link, title in sorted(links_found):
+        if link in posted_links:
+            continue
+        if is_excluded(title):
+            print(f"[МФВ] Skipped: {title}")
+            save_posted_link(link)
+            posted_links.add(link)
+            continue
+
+        print(f"[МФВ] Processing: {title}")
+        try:
+            page = fetch_html(link)
+            description = ""
+            if page:
+                for p in page.find_all("p"):
+                    text = p.get_text(" ", strip=True)
+                    if len(text) > 80:
+                        description = text[:600]
+                        break
+            if not description:
+                description = title
+
+            deadline = extract_deadline(description)
+            msg = f"📌 <b>{title}</b>\n"
+            if deadline:
+                msg += f"📅 <b>Дедлайн:</b> {deadline}\n"
+            msg += f"\n{description}\n\n🔗 <a href=\"{link}\">МФ «Відродження» — джерело</a>\n"
+
+            response = send_telegram_message(msg)
+            if response.status_code == 200:
+                save_posted_link(link)
+                posted_links.add(link)
+            time.sleep(2)
+        except Exception as e:
+            print(f"[МФВ] ERROR {link}: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -375,9 +461,15 @@ def run_simple_source(rss_url: str, source_label: str, posted_links: set, limit:
 def main():
     posted_links = load_posted_links()
 
+    # RSS-джерела
     run_chaszmin(posted_links)
-    run_simple_source(GURT_RSS, "ГУРТ — джерело", posted_links)
-    run_simple_source(PROSTIR_RSS, "Громадський Простір — джерело", posted_links)
+    run_simple_source(GURT_RSS,     "ГУРТ — джерело",              posted_links)
+    run_simple_source(PROSTIR_RSS,  "Громадський Простір — джерело", posted_links)
+    run_simple_source(GETGRANT_RSS, "GetGrant — джерело",           posted_links)
+
+    # HTML-скрейпери
+    run_isar(posted_links)
+    run_irf(posted_links)
 
 
 if __name__ == "__main__":
