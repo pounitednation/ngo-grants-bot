@@ -17,6 +17,10 @@ CHASZMIN_RSS  = "https://chaszmin.com.ua/category/granty-tut/feed/"
 GURT_RSS      = "https://gurt.org.ua/rss/section/grants/"
 PROSTIR_RSS   = "https://www.prostir.ua/?feed=rss2&post_type=grants"
 GETGRANT_RSS  = "https://getgrant.ua/grants-and-funding/?feed=rss2"
+# Grant-AV — WordPress, RSS теоретично є на /feed/, але сайт захищений Cloudflare.
+# Якщо GitHub Actions IP не заблоковано — буде працювати, інакше feedparser
+# поверне порожній список і функція просто нічого не зробить (це безпечно).
+GRANTAV_RSS   = "https://grant-av.com.ua/grants/feed/"
 ISAR_URL      = "https://ednannia.ua/181-contests"
 IRF_URL       = "https://www.irf.ua/grants/contests/"
 
@@ -598,9 +602,10 @@ def main():
 
     # RSS-джерела
     run_chaszmin(posted_links)
-    run_simple_source(GURT_RSS,     "ГУРТ — джерело",              posted_links)
+    run_simple_source(GURT_RSS,     "ГУРТ — джерело",                posted_links)
     run_simple_source(PROSTIR_RSS,  "Громадський Простір — джерело", posted_links)
-    run_simple_source(GETGRANT_RSS, "GetGrant — джерело",           posted_links)
+    run_simple_source(GETGRANT_RSS, "GetGrant — джерело",            posted_links)
+    run_simple_source(GRANTAV_RSS,  "Грант АВ — джерело",            posted_links)
 
     # HTML-скрейпери
     run_isar(posted_links)
