@@ -13,12 +13,20 @@ POSTED_LINKS_FILE = "posted_links.txt"
 # ---------------------------------------------------------------------------
 # ДЖЕРЕЛА
 # ---------------------------------------------------------------------------
-CHASZMIN_RSS  = "https://chaszmin.com.ua/category/granty-tut/feed/"
-GURT_RSS      = "https://gurt.org.ua/rss/section/grants/"
-PROSTIR_RSS   = "https://www.prostir.ua/?feed=rss2&post_type=grants"
-GETGRANT_RSS  = "https://getgrant.ua/grants-and-funding/?feed=rss2"
-ISAR_URL      = "https://ednannia.ua/181-contests"
-IRF_URL       = "https://www.irf.ua/grants/contests/"
+CHASZMIN_RSS       = "https://chaszmin.com.ua/category/granty-tut/feed/"
+GURT_RSS           = "https://gurt.org.ua/rss/section/grants/"
+PROSTIR_RSS        = "https://www.prostir.ua/?feed=rss2&post_type=grants"
+GETGRANT_RSS       = "https://getgrant.ua/grants-and-funding/?feed=rss2"
+# Децентралізація — офіційний урядовий портал Мінрозвитку громад.
+# Публікує каталоги можливостей, гранти для громад, програми відновлення.
+# Унікальна ніша: децентралізація, ОТГ, відновлення — не перекривається іншими джерелами.
+DECENTRALIZATION_RSS = "https://decentralization.ua/tags/hranty/feed/"
+ISAR_URL           = "https://ednannia.ua/181-contests"
+IRF_URL            = "https://www.irf.ua/grants/contests/"
+# Три державні фонди — HTML-парсери (власні платформи без RSS)
+UCF_URL            = "https://ucf.in.ua/programs"          # Укр. культурний фонд
+UMF_URL            = "https://uyf.gov.ua/programs"         # Укр. молодіжний фонд
+VF_URL             = "https://veteranfund.com.ua/competitions/"  # Ветеранський фонд
 
 # ---------------------------------------------------------------------------
 # ФІЛЬТРИ — тендери / закупівлі / вакансії-консультантів
@@ -615,21 +623,321 @@ def run_irf(posted_links: set) -> None:
 
 
 # ---------------------------------------------------------------------------
+# ДЕДУПЛІКАЦІЯ ЗА ЗАГОЛОВКОМ
+# Якщо один грант публікується з двох джерел з однаковою назвою —
+# публікуємо лише перший. Зберігаємо нормалізований хеш заголовку
+# в окремому файлі posted_titles.txt.
+# ---------------------------------------------------------------------------
+
+POSTED_TITLES_FILE = "posted_titles.txt"
+
+
+def load_posted_titles() -> set:
+    try:
+        with open(POSTED_TITLES_FILE, "r", encoding="utf-8") as f:
+            return set(f.read().splitlines())
+    except FileNotFoundError:
+        return set()
+
+
+def title_hash(title: str) -> str:
+    """Нормалізований хеш першиx 80 символів заголовку."""
+    normalized = re.sub(r"\s+", " ", title.strip().lower())[:80]
+    return hashlib.md5(normalized.encode("utf-8")).hexdigest()
+
+
+def is_title_duplicate(title: str, posted_titles: set) -> bool:
+    return title_hash(title) in posted_titles
+
+
+def save_title_hash(title: str, posted_titles: set) -> None:
+    h = title_hash(title)
+    if h not in posted_titles:
+        posted_titles.add(h)
+        with open(POSTED_TITLES_FILE, "a", encoding="utf-8") as f:
+            f.write(h + "\n")
+
+
+# ---------------------------------------------------------------------------
+# УКФ — Український культурний фонд (ucf.in.ua)
+# Конкурси публікуються на /programs як картки з назвою та посиланням.
+# Платформа власна (не WordPress), без RSS.
+# Конкурсів мало (5-10 на сезон), зате всі унікальні.
+# ---------------------------------------------------------------------------
+
+def run_ucf(posted_links: set, posted_titles: set) -> None:
+    soup = fetch_html(UCF_URL)
+    if not soup:
+        print("[УКФ] Не вдалось завантажити сторінку програм")
+        return
+
+    # Шукаємо посилання на програми/конкурси
+    contest_links = []
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if "/m_programs/" in href or "/programs/" in href:
+            if href.startswith("/"):
+                href = "https://ucf.in.ua" + href
+            if href not in contest_links and "ucf.in.ua" in href:
+                contest_links.append(href)
+
+    if not contest_links:
+        print("[УКФ] Жодного конкурсу не знайдено на сторінці")
+        return
+
+    print(f"[УКФ] Знайдено {len(contest_links)} програм")
+
+    for link in contest_links[:15]:  # обмежуємо щоб не спамити при першому запуску
+        if link in posted_links:
+            continue
+        try:
+            page = fetch_html(link)
+            if not page:
+                continue
+
+            h1 = page.find("h1")
+            title = h1.get_text(" ", strip=True) if h1 else ""
+            if not title:
+                continue
+
+            if is_title_duplicate(title, posted_titles):
+                print(f"[УКФ] Skipped (дубль заголовку): {title[:60]}")
+                save_posted_link(link)
+                posted_links.add(link)
+                continue
+
+            if is_excluded(title):
+                print(f"[УКФ] Skipped (фільтр): {title[:60]}")
+                save_posted_link(link)
+                posted_links.add(link)
+                continue
+
+            page_text = page.get_text(" ", strip=True)
+            deadline_str = extract_deadline(page_text)
+            if deadline_str and is_deadline_passed(deadline_str):
+                print(f"[УКФ] Skipped (дедлайн минув: {deadline_str}): {title[:50]}")
+                save_posted_link(link)
+                posted_links.add(link)
+                continue
+
+            description = ""
+            for p in page.find_all("p"):
+                text = p.get_text(" ", strip=True)
+                if len(text) > 80:
+                    description = text[:600]
+                    break
+            if not description:
+                description = title
+
+            print(f"[УКФ] Processing: {title[:60]}")
+            msg = f"🎨 <b>{title}</b>\n"
+            if deadline_str:
+                msg += f"📅 <b>Дедлайн:</b> {deadline_str}\n"
+            msg += f"\n{description}\n\n🔗 <a href=\"{link}\">УКФ — джерело</a>\n"
+
+            response = send_telegram_message(msg)
+            if response.status_code == 200:
+                save_posted_link(link)
+                posted_links.add(link)
+                save_title_hash(title, posted_titles)
+            time.sleep(2)
+        except Exception as e:
+            print(f"[УКФ] ERROR {link}: {e}")
+
+
+# ---------------------------------------------------------------------------
+# УМФ — Український молодіжний фонд (uyf.gov.ua)
+# Конкурси публікуються на /programs — окремі сторінки по програмах.
+# Платформа власна, без RSS.
+# ---------------------------------------------------------------------------
+
+def run_umf(posted_links: set, posted_titles: set) -> None:
+    soup = fetch_html(UMF_URL)
+    if not soup:
+        print("[УМФ] Не вдалось завантажити сторінку програм")
+        return
+
+    contest_links = []
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if "/programs/" in href:
+            if href.startswith("/"):
+                href = "https://uyf.gov.ua" + href
+            if href not in contest_links and "uyf.gov.ua" in href and href != UMF_URL:
+                contest_links.append(href)
+
+    if not contest_links:
+        print("[УМФ] Жодного конкурсу не знайдено на сторінці")
+        return
+
+    print(f"[УМФ] Знайдено {len(contest_links)} програм")
+
+    for link in contest_links[:10]:
+        if link in posted_links:
+            continue
+        try:
+            page = fetch_html(link)
+            if not page:
+                continue
+
+            h1 = page.find("h1")
+            title = h1.get_text(" ", strip=True) if h1 else ""
+            if not title:
+                continue
+
+            if is_title_duplicate(title, posted_titles):
+                print(f"[УМФ] Skipped (дубль заголовку): {title[:60]}")
+                save_posted_link(link)
+                posted_links.add(link)
+                continue
+
+            if is_excluded(title):
+                print(f"[УМФ] Skipped (фільтр): {title[:60]}")
+                save_posted_link(link)
+                posted_links.add(link)
+                continue
+
+            page_text = page.get_text(" ", strip=True)
+            deadline_str = extract_deadline(page_text)
+            if deadline_str and is_deadline_passed(deadline_str):
+                print(f"[УМФ] Skipped (дедлайн минув: {deadline_str}): {title[:50]}")
+                save_posted_link(link)
+                posted_links.add(link)
+                continue
+
+            description = ""
+            for p in page.find_all("p"):
+                text = p.get_text(" ", strip=True)
+                if len(text) > 80:
+                    description = text[:600]
+                    break
+            if not description:
+                description = title
+
+            print(f"[УМФ] Processing: {title[:60]}")
+            msg = f"🌱 <b>{title}</b>\n"
+            if deadline_str:
+                msg += f"📅 <b>Дедлайн:</b> {deadline_str}\n"
+            msg += f"\n{description}\n\n🔗 <a href=\"{link}\">УМФ — джерело</a>\n"
+
+            response = send_telegram_message(msg)
+            if response.status_code == 200:
+                save_posted_link(link)
+                posted_links.add(link)
+                save_title_hash(title, posted_titles)
+            time.sleep(2)
+        except Exception as e:
+            print(f"[УМФ] ERROR {link}: {e}")
+
+
+# ---------------------------------------------------------------------------
+# ВЕТЕРАНСЬКИЙ ФОНД (veteranfund.com.ua)
+# WordPress-сайт. Конкурси на /competitions/ зі списком карток,
+# кожен конкурс — окрема сторінка /contests/[slug]/
+# ---------------------------------------------------------------------------
+
+def run_veteranfund(posted_links: set, posted_titles: set) -> None:
+    soup = fetch_html(VF_URL)
+    if not soup:
+        print("[ВФ] Не вдалось завантажити сторінку конкурсів")
+        return
+
+    contest_links = []
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if "/contests/" in href and href != VF_URL:
+            if not href.startswith("http"):
+                href = "https://veteranfund.com.ua" + href
+            if href not in contest_links:
+                contest_links.append(href)
+
+    if not contest_links:
+        print("[ВФ] Жодного конкурсу не знайдено на сторінці")
+        return
+
+    print(f"[ВФ] Знайдено {len(contest_links)} конкурсів")
+
+    for link in contest_links:
+        if link in posted_links:
+            continue
+        try:
+            page = fetch_html(link)
+            if not page:
+                continue
+
+            h1 = page.find("h1")
+            title = h1.get_text(" ", strip=True) if h1 else ""
+            if not title:
+                continue
+
+            if is_title_duplicate(title, posted_titles):
+                print(f"[ВФ] Skipped (дубль заголовку): {title[:60]}")
+                save_posted_link(link)
+                posted_links.add(link)
+                continue
+
+            if is_excluded(title):
+                print(f"[ВФ] Skipped (фільтр): {title[:60]}")
+                save_posted_link(link)
+                posted_links.add(link)
+                continue
+
+            page_text = page.get_text(" ", strip=True)
+            deadline_str = extract_deadline(page_text)
+            if deadline_str and is_deadline_passed(deadline_str):
+                print(f"[ВФ] Skipped (дедлайн минув: {deadline_str}): {title[:50]}")
+                save_posted_link(link)
+                posted_links.add(link)
+                continue
+
+            description = ""
+            for p in page.find_all("p"):
+                text = p.get_text(" ", strip=True)
+                if len(text) > 80:
+                    description = text[:600]
+                    break
+            if not description:
+                description = title
+
+            print(f"[ВФ] Processing: {title[:60]}")
+            msg = f"🎖 <b>{title}</b>\n"
+            if deadline_str:
+                msg += f"📅 <b>Дедлайн:</b> {deadline_str}\n"
+            msg += f"\n{description}\n\n🔗 <a href=\"{link}\">Ветеранський фонд — джерело</a>\n"
+
+            response = send_telegram_message(msg)
+            if response.status_code == 200:
+                save_posted_link(link)
+                posted_links.add(link)
+                save_title_hash(title, posted_titles)
+            time.sleep(2)
+        except Exception as e:
+            print(f"[ВФ] ERROR {link}: {e}")
+
+
+# ---------------------------------------------------------------------------
 # MAIN
 # ---------------------------------------------------------------------------
 
 def main():
     posted_links = load_posted_links()
+    posted_titles = load_posted_titles()
 
     # RSS-джерела
     run_chaszmin(posted_links)
-    run_simple_source(GURT_RSS,     "ГУРТ — джерело",                posted_links)
-    run_simple_source(PROSTIR_RSS,  "Громадський Простір — джерело", posted_links)
-    run_simple_source(GETGRANT_RSS, "GetGrant — джерело",            posted_links)
+    run_simple_source(GURT_RSS,              "ГУРТ — джерело",                posted_links)
+    run_simple_source(PROSTIR_RSS,           "Громадський Простір — джерело", posted_links)
+    run_simple_source(GETGRANT_RSS,          "GetGrant — джерело",            posted_links)
+    run_simple_source(DECENTRALIZATION_RSS,  "Децентралізація — джерело",     posted_links)
 
-    # HTML-скрейпери
+    # HTML-скрейпери — загальні
     run_isar(posted_links)
     run_irf(posted_links)
+
+    # HTML-скрейпери — державні фонди (Фаза 1)
+    run_ucf(posted_links, posted_titles)
+    run_umf(posted_links, posted_titles)
+    run_veteranfund(posted_links, posted_titles)
 
 
 if __name__ == "__main__":
