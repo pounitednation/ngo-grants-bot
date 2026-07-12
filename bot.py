@@ -20,13 +20,11 @@ GETGRANT_RSS       = "https://getgrant.ua/grants-and-funding/?feed=rss2"
 # Децентралізація — офіційний урядовий портал Мінрозвитку громад.
 # Публікує каталоги можливостей, гранти для громад, програми відновлення.
 # Унікальна ніша: децентралізація, ОТГ, відновлення — не перекривається іншими джерелами.
-DECENTRALIZATION_RSS = "https://decentralization.ua/tags/hranty/feed/"
+DECENTRALIZATION_RSS = None   # 403 Cloudflare на GitHub Actions IP — вимкнено
 ISAR_URL           = "https://ednannia.ua/181-contests"
 IRF_URL            = "https://www.irf.ua/grants/contests/"
-# Три державні фонди — HTML-парсери (власні платформи без RSS)
-UCF_URL            = "https://ucf.in.ua/programs"          # Укр. культурний фонд
-UMF_URL            = "https://uyf.gov.ua/programs"         # Укр. молодіжний фонд
-VF_URL             = "https://veteranfund.com.ua/competitions/"  # Ветеранський фонд
+UCF_URL            = "https://ucf.in.ua/programs"
+# УМФ і ВФ — повністю JS-рендеринг або Cloudflare 403, недоступні з GitHub Actions
 
 # ---------------------------------------------------------------------------
 # ФІЛЬТРИ — тендери / закупівлі / вакансії-консультантів
@@ -957,19 +955,19 @@ def main():
 
     # RSS-джерела
     run_chaszmin(posted_links)
-    run_simple_source(GURT_RSS,              "ГУРТ — джерело",                posted_links)
-    run_simple_source(PROSTIR_RSS,           "Громадський Простір — джерело", posted_links)
-    run_simple_source(GETGRANT_RSS,          "GetGrant — джерело",            posted_links)
-    run_simple_source(DECENTRALIZATION_RSS,  "Децентралізація — джерело",     posted_links)
+    run_simple_source(GURT_RSS,     "ГУРТ — джерело",                posted_links)
+    run_simple_source(PROSTIR_RSS,  "Громадський Простір — джерело", posted_links)
+    run_simple_source(GETGRANT_RSS, "GetGrant — джерело",            posted_links)
 
     # HTML-скрейпери — загальні
     run_isar(posted_links)
     run_irf(posted_links)
 
-    # HTML-скрейпери — державні фонди (Фаза 1)
+    # HTML-скрейпери — державні фонди
     run_ucf(posted_links, posted_titles)
-    run_umf(posted_links, posted_titles)
-    run_veteranfund(posted_links, posted_titles)
+    # УМФ (uyf.gov.ua) — JS-рендеринг, недоступний
+    # ВФ (veteranfund.com.ua) — Cloudflare 403
+    # Децентралізація (decentralization.ua) — Cloudflare 403
 
 
 if __name__ == "__main__":
