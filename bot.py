@@ -720,16 +720,32 @@ def run_ucf(posted_links: set, posted_titles: set) -> None:
                 posted_links.add(link)
                 continue
 
+            # Опис — перший змістовний абзац, пропускаємо службові тексти
+            # (форма зворотного зв'язку, навігація, короткі підписи)
+            UCF_JUNK = [
+                "ви можете поставити питання",
+                "отримати на нього відповідь",
+                "напишіть нам",
+                "підписка на новини",
+            ]
             description = ""
             for p in page.find_all("p"):
                 text = p.get_text(" ", strip=True)
-                if len(text) > 80:
-                    description = text[:600]
-                    break
+                if len(text) < 100:
+                    continue
+                if any(j in text.lower() for j in UCF_JUNK):
+                    continue
+                description = text[:600]
+                break
+            if not description:
+                # Fallback — перший великий div з текстом
+                for div in page.find_all(["div", "section"]):
+                    text = div.get_text(" ", strip=True)
+                    if len(text) > 150 and not any(j in text.lower() for j in UCF_JUNK):
+                        description = text[:600]
+                        break
             if not description:
                 description = title
-
-            print(f"[УКФ] Processing: {title[:60]}")
             msg = f"🎨 <b>{title}</b>\n"
             if deadline_str:
                 msg += f"📅 <b>Дедлайн:</b> {deadline_str}\n"
@@ -752,25 +768,41 @@ def run_ucf(posted_links: set, posted_titles: set) -> None:
 # ---------------------------------------------------------------------------
 
 def run_umf(posted_links: set, posted_titles: set) -> None:
-    soup = fetch_html(UMF_URL)
-    if not soup:
-        print("[УМФ] Не вдалось завантажити сторінку програм")
-        return
+    """УМФ: сторінка /programs рендериться через JS — requests бачить порожній HTML.
+    Стратегія: читаємо RSS новин УМФ (якщо є) або сканує /news на посилання
+    типу /programs/[slug] — там публікуються оголошення конкурсів."""
 
     contest_links = []
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if "/programs/" in href:
-            if href.startswith("/"):
-                href = "https://uyf.gov.ua" + href
-            if href not in contest_links and "uyf.gov.ua" in href and href != UMF_URL:
-                contest_links.append(href)
+
+    # Спроба 1: RSS новин УМФ
+    feed = feedparser.parse("https://uyf.gov.ua/rss/")
+    if not feed.entries:
+        feed = feedparser.parse("https://uyf.gov.ua/feed/")
+
+    if feed.entries:
+        for entry in feed.entries[:20]:
+            link = entry.link
+            # Відбираємо лише посилання на програми/конкурси
+            if "/programs/" in link and link not in contest_links:
+                contest_links.append(link)
+        print(f"[УМФ] Знайдено {len(contest_links)} конкурсів через RSS")
+
+    # Спроба 2: сторінка новин — там є посилання на програми
+    if not contest_links:
+        news_soup = fetch_html("https://uyf.gov.ua/news")
+        if news_soup:
+            for a in news_soup.find_all("a", href=True):
+                href = a["href"]
+                if "/programs/" in href:
+                    if href.startswith("/"):
+                        href = "https://uyf.gov.ua" + href
+                    if href not in contest_links:
+                        contest_links.append(href)
+            print(f"[УМФ] Знайдено {len(contest_links)} конкурсів через /news")
 
     if not contest_links:
-        print("[УМФ] Жодного конкурсу не знайдено на сторінці")
+        print("[УМФ] Жодного конкурсу не знайдено (JS-рендеринг, RSS недоступний)")
         return
-
-    print(f"[УМФ] Знайдено {len(contest_links)} програм")
 
     for link in contest_links[:10]:
         if link in posted_links:
