@@ -961,12 +961,16 @@ def run_mva(posted_links: set, posted_titles: set) -> None:
     for a in soup.find_all("a", href=True):
         href = a["href"]
         text = a.get_text(strip=True)
-        # Беремо лише новини де є слова про конкурс/грант
-        if any(kw in text.lower() for kw in ["конкурс", "грант", "варто", "програм"]):
+        # Беремо лише посилання де є слова про конкурс/грант у тексті або URL
+        if any(kw in text.lower() or kw in href.lower()
+               for kw in ["конкурс", "грант", "варто", "програм", "contest", "grant"]):
             if href.startswith("/"):
                 href = "https://mva.gov.ua" + href
-            if "mva.gov.ua" in href and href not in news_links:
-                news_links.append((href, text))
+            # Пропускаємо навігаційні скорочення (/vartogo, /vartobiznes тощо)
+            # Беремо лише повні URL новин (зазвичай довші)
+            if "mva.gov.ua" in href and href not in [l for l, _ in news_links]:
+                if len(href) > 40:  # навігаційні посилання короткі
+                    news_links.append((href, text))
 
     if not news_links:
         print("[МВА/ВФ] Жодної новини про конкурси не знайдено")
@@ -974,18 +978,8 @@ def run_mva(posted_links: set, posted_titles: set) -> None:
 
     print(f"[МВА/ВФ] Знайдено {len(news_links)} новин про конкурси")
 
-    for link, title in news_links[:10]:
+    for link, nav_text in news_links[:10]:
         if link in posted_links:
-            continue
-        if is_title_duplicate(title, posted_titles):
-            print(f"[МВА/ВФ] Skipped (дубль): {title[:60]}")
-            save_posted_link(link)
-            posted_links.add(link)
-            continue
-        if is_excluded(title):
-            print(f"[МВА/ВФ] Skipped (фільтр): {title[:60]}")
-            save_posted_link(link)
-            posted_links.add(link)
             continue
 
         try:
@@ -993,8 +987,23 @@ def run_mva(posted_links: set, posted_titles: set) -> None:
             if not page:
                 continue
 
+            # Беремо реальний заголовок зі сторінки (h1), а не навігаційний текст
             h1 = page.find("h1")
-            full_title = h1.get_text(" ", strip=True) if h1 else title
+            full_title = h1.get_text(" ", strip=True) if h1 else nav_text
+            if not full_title or len(full_title) < 5:
+                full_title = nav_text
+
+            # Перевірки за реальним заголовком
+            if is_title_duplicate(full_title, posted_titles):
+                print(f"[МВА/ВФ] Skipped (дубль): {full_title[:60]}")
+                save_posted_link(link)
+                posted_links.add(link)
+                continue
+            if is_excluded(full_title):
+                print(f"[МВА/ВФ] Skipped (фільтр): {full_title[:60]}")
+                save_posted_link(link)
+                posted_links.add(link)
+                continue
 
             page_text = page.get_text(" ", strip=True)
             deadline_str = extract_deadline(page_text)
