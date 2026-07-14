@@ -960,16 +960,17 @@ def run_mva(posted_links: set, posted_titles: set) -> None:
     news_links = []
     for a in soup.find_all("a", href=True):
         href = a["href"]
-        text = a.get_text(strip=True)
-        # Беремо лише посилання де є слова про конкурс/грант у тексті або URL
-        if any(kw in text.lower() or kw in href.lower()
-               for kw in ["конкурс", "грант", "варто", "програм", "contest", "grant"]):
+        # Новини МВА про конкурси ВФ мають URL вигляду:
+        # /prescenter/category/86-novini/[slug-назви-конкурсу]
+        # Навігаційні хаб-сторінки (/vartogo, /vartobiznes) НЕ беремо
+        if "/prescenter/category/86-novini/" in href:
             if href.startswith("/"):
                 href = "https://mva.gov.ua" + href
-            # Пропускаємо навігаційні скорочення (/vartogo, /vartobiznes тощо)
-            # Беремо лише повні URL новин (зазвичай довші)
-            if "mva.gov.ua" in href and href not in [l for l, _ in news_links]:
-                if len(href) > 40:  # навігаційні посилання короткі
+            text = a.get_text(strip=True)
+            # Беремо лише якщо є ключові слова в тексті або URL
+            if any(kw in text.lower() or kw in href.lower()
+                   for kw in ["конкурс", "грант", "варто", "програм", "contest"]):
+                if href not in [l for l, _ in news_links]:
                     news_links.append((href, text))
 
     if not news_links:
