@@ -347,21 +347,26 @@ def run_simple_source(rss_url: str, source_label: str, posted_links: set, limit:
 # Унікальний ключ — нормалізований URL сторінки конкурсу.
 # ---------------------------------------------------------------------------
 
-def fetch_html(url: str, timeout: int = 30) -> BeautifulSoup | None:
+def fetch_html(url: str, timeout: int = 60, retries: int = 2) -> BeautifulSoup | None:
     import warnings
     try:
         from bs4 import XMLParsedAsHTMLWarning
         warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
     except ImportError:
         pass
-    try:
-        resp = requests.get(url, timeout=timeout,
-                            headers={"User-Agent": "Mozilla/5.0 ngo-grants-bot/1.0"})
-        resp.raise_for_status()
-        return BeautifulSoup(resp.text, "html.parser")
-    except Exception as e:
-        print(f"[fetch_html] ERROR {url}: {e}")
-        return None
+    for attempt in range(retries):
+        try:
+            resp = requests.get(url, timeout=timeout,
+                                headers={"User-Agent": "Mozilla/5.0 ngo-grants-bot/1.0"})
+            resp.raise_for_status()
+            return BeautifulSoup(resp.text, "html.parser")
+        except Exception as e:
+            if attempt < retries - 1:
+                print(f"[fetch_html] Retry {attempt + 1}/{retries - 1} for {url}: {e}")
+                time.sleep(5)
+            else:
+                print(f"[fetch_html] ERROR {url}: {e}")
+                return None
 
 
 UKRAINIAN_MONTHS = {
