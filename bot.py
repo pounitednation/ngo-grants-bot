@@ -24,7 +24,7 @@ UCF_URL            = "https://ucf.in.ua/programs"
 # Фаза 2: нові джерела для ВФ і УМФ
 # mva.gov.ua — Міністерство у справах ветеранів, розділ ВФ
 # (урядовий сайт, може не мати Cloudflare на GitHub Actions IP)
-MVA_URL            = "https://mva.gov.ua/category/141-veteranskiy-fond"
+MVA_URL            = "https://mva.gov.ua/prescenter/category/86-novini"
 # УМФ — пробуємо RSS та сторінку новин
 UMF_RSS            = "https://uyf.gov.ua/rss/"
 UMF_NEWS_URL       = "https://uyf.gov.ua/news"
