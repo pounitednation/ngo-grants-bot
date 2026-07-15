@@ -21,10 +21,10 @@ DECENTRALIZATION_RSS = None   # 403 Cloudflare — вимкнено
 ISAR_URL           = "https://ednannia.ua/181-contests"
 IRF_URL            = "https://www.irf.ua/grants/contests/"
 UCF_URL            = "https://ucf.in.ua/programs"
-# Фаза 2: нові джерела для ВФ і УМФ
-# mva.gov.ua — Міністерство у справах ветеранів, розділ ВФ
-# (урядовий сайт, може не мати Cloudflare на GitHub Actions IP)
-MVA_URL            = "https://mva.gov.ua/novini"
+# Фаза 2: ВФ — читаємо RSS та сторінку veteranfund.com.ua
+# mva.gov.ua — занадто повільний (Read timeout навіть з 60с, нестабільний)
+VF_RSS             = "https://veteranfund.com.ua/contests/feed/"
+VF_COMPETITIONS    = "https://veteranfund.com.ua/competitions/"
 # УМФ — пробуємо RSS та сторінку новин
 UMF_RSS            = "https://uyf.gov.ua/rss/"
 UMF_NEWS_URL       = "https://uyf.gov.ua/news"
@@ -994,59 +994,61 @@ def run_veteranfund(posted_links: set, posted_titles: set) -> None:
             print(f"[ВФ] ERROR {link}: {e}")
 
 
-def run_mva(posted_links: set, posted_titles: set) -> None:
-    """МВА — Міністерство у справах ветеранів, стрічка новин /novini.
-    Фільтруємо лише новини про конкурси/гранти ВФ."""
-    soup = fetch_html(MVA_URL)
-    if not soup:
-        print("[МВА/ВФ] Не вдалось завантажити сторінку")
+def run_veteranfund(posted_links: set, posted_titles: set) -> None:
+    """Ветеранський фонд: спочатку пробуємо RSS /contests/feed/,
+    якщо заблоковано — читаємо HTML сторінки /competitions/."""
+
+    contest_links = []
+
+    # Спроба 1: RSS
+    feed = feedparser.parse(VF_RSS)
+    if feed.entries:
+        print(f"[ВФ] RSS працює: {len(feed.entries)} записів")
+        for entry in reversed(feed.entries[:15]):
+            if entry.link not in contest_links:
+                contest_links.append((entry.link, entry.title.strip()))
+    else:
+        # Спроба 2: HTML сторінки /competitions/
+        soup = fetch_html(VF_COMPETITIONS)
+        if soup:
+            for a in soup.find_all("a", href=True):
+                href = a["href"]
+                if "/contests/" in href:
+                    if not href.startswith("http"):
+                        href = "https://veteranfund.com.ua" + href
+                    text = a.get_text(strip=True)
+                    if href not in [l for l, _ in contest_links]:
+                        contest_links.append((href, text))
+            if contest_links:
+                print(f"[ВФ] HTML: знайдено {len(contest_links)} конкурсів")
+        else:
+            print("[ВФ] Не вдалось завантажити (RSS і HTML недоступні)")
+            return
+
+    if not contest_links:
+        print("[ВФ] Жодного конкурсу не знайдено")
         return
 
-    news_links = []
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        text = a.get_text(strip=True)
-        # Окремі новини МВА мають URL вигляду:
-        # /prescenter/category/86-novini/[slug]
-        if "/prescenter/category/86-novini/" not in href:
-            continue
-        if href.startswith("/"):
-            href = "https://mva.gov.ua" + href
-        # Беремо лише новини про конкурси/гранти ВФ
-        if any(kw in text.lower() or kw in href.lower()
-               for kw in ["конкурс", "грант", "варто", "програм", "фінансуванн"]):
-            if href not in [l for l, _ in news_links]:
-                news_links.append((href, text))
-
-    if not news_links:
-        print("[МВА/ВФ] Жодної новини про конкурси не знайдено")
-        return
-
-    print(f"[МВА/ВФ] Знайдено {len(news_links)} новин про конкурси")
-
-    for link, nav_text in news_links[:10]:
+    for link, nav_title in contest_links:
         if link in posted_links:
             continue
-
         try:
             page = fetch_html(link)
             if not page:
                 continue
 
-            # Беремо реальний заголовок зі сторінки (h1), а не навігаційний текст
             h1 = page.find("h1")
-            full_title = h1.get_text(" ", strip=True) if h1 else nav_text
-            if not full_title or len(full_title) < 5:
-                full_title = nav_text
+            title = h1.get_text(" ", strip=True) if h1 else nav_title
+            if not title or len(title) < 5:
+                title = nav_title
 
-            # Перевірки за реальним заголовком
-            if is_title_duplicate(full_title, posted_titles):
-                print(f"[МВА/ВФ] Skipped (дубль): {full_title[:60]}")
+            if is_title_duplicate(title, posted_titles):
+                print(f"[ВФ] Skipped (дубль): {title[:60]}")
                 save_posted_link(link)
                 posted_links.add(link)
                 continue
-            if is_excluded(full_title):
-                print(f"[МВА/ВФ] Skipped (фільтр): {full_title[:60]}")
+            if is_excluded(title):
+                print(f"[ВФ] Skipped (фільтр): {title[:60]}")
                 save_posted_link(link)
                 posted_links.add(link)
                 continue
@@ -1054,7 +1056,7 @@ def run_mva(posted_links: set, posted_titles: set) -> None:
             page_text = page.get_text(" ", strip=True)
             deadline_str = extract_deadline(page_text)
             if deadline_str and is_deadline_passed(deadline_str):
-                print(f"[МВА/ВФ] Skipped (дедлайн минув: {deadline_str}): {full_title[:50]}")
+                print(f"[ВФ] Skipped (дедлайн минув: {deadline_str}): {title[:50]}")
                 save_posted_link(link)
                 posted_links.add(link)
                 continue
@@ -1066,10 +1068,10 @@ def run_mva(posted_links: set, posted_titles: set) -> None:
                     description = text[:600]
                     break
             if not description:
-                description = full_title
+                description = title
 
-            print(f"[МВА/ВФ] Processing: {full_title[:60]}")
-            msg = f"🎖 <b>{full_title}</b>\n"
+            print(f"[ВФ] Processing: {title[:60]}")
+            msg = f"🎖 <b>{title}</b>\n"
             if deadline_str:
                 msg += f"📅 <b>Дедлайн:</b> {deadline_str}\n"
             msg += f"\n{description}\n\n🔗 <a href=\"{link}\">Ветеранський фонд — джерело</a>\n"
@@ -1078,10 +1080,10 @@ def run_mva(posted_links: set, posted_titles: set) -> None:
             if response.status_code == 200:
                 save_posted_link(link)
                 posted_links.add(link)
-                save_title_hash(full_title, posted_titles)
+                save_title_hash(title, posted_titles)
             time.sleep(2)
         except Exception as e:
-            print(f"[МВА/ВФ] ERROR {link}: {e}")
+            print(f"[ВФ] ERROR {link}: {e}")
 
 
 def run_umf_phase2(posted_links: set, posted_titles: set) -> None:
@@ -1186,8 +1188,8 @@ def main():
 
     # HTML-скрейпери — державні фонди
     run_ucf(posted_links, posted_titles)
-    run_mva(posted_links, posted_titles)       # Ветеранський фонд через МВА
-    run_umf_phase2(posted_links, posted_titles)  # УМФ — фаза 2
+    run_veteranfund(posted_links, posted_titles)    # Ветеранський фонд
+    run_umf_phase2(posted_links, posted_titles)     # УМФ
 
 
 if __name__ == "__main__":
