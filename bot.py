@@ -47,6 +47,14 @@ EXCLUDE_KEYWORDS = [
     "відбір тренер", "відбір фасилітатор", "відбір консультант",
     "конкурс на надання послуг", "конкурсний відбір тренер",
     "конкурсний відбір консультант", "конкурсний відбір постачальник",
+    # EOI/REOI — запрошення до подання зацікавлень (World Bank, KfW, ЄБРР формат)
+    "запрошення організацій до подання зацікавлень",
+    "запрошення до подання зацікавлень",
+    "подання зацікавлень",
+    "expression of interest", "request for expression",
+    "reoi", "eoi ",
+    "пакет закупівель", "запит пропозицій",
+    "уфсі", "уфсі/фонд",
     # вакансії консультантів/експертів
     "пошук експерта", "пошук експертки", "пошук експерт",
     "запрошує експерта", "запрошує консультант",
@@ -1013,12 +1021,21 @@ def run_veteranfund(posted_links: set, posted_titles: set) -> None:
         if soup:
             for a in soup.find_all("a", href=True):
                 href = a["href"]
-                if "/contests/" in href:
-                    if not href.startswith("http"):
-                        href = "https://veteranfund.com.ua" + href
-                    text = a.get_text(strip=True)
-                    if href not in [l for l, _ in contest_links]:
-                        contest_links.append((href, text))
+                # Беремо лише конкретні сторінки конкурсів /contests/[slug]/
+                # виключаємо саму сторінку /competitions/ і /contests/ без slug
+                if "/contests/" not in href:
+                    continue
+                if not href.startswith("http"):
+                    href = "https://veteranfund.com.ua" + href
+                # Пропускаємо якщо це та сама сторінка /competitions/ або /contests/ без slug
+                if href.rstrip("/") in [
+                    "https://veteranfund.com.ua/competitions",
+                    "https://veteranfund.com.ua/contests",
+                ]:
+                    continue
+                text = a.get_text(strip=True)
+                if href not in [l for l, _ in contest_links]:
+                    contest_links.append((href, text))
             if contest_links:
                 print(f"[ВФ] HTML: знайдено {len(contest_links)} конкурсів")
         else:
@@ -1039,8 +1056,16 @@ def run_veteranfund(posted_links: set, posted_titles: set) -> None:
 
             h1 = page.find("h1")
             title = h1.get_text(" ", strip=True) if h1 else nav_title
-            if not title or len(title) < 5:
+            # Відкидаємо нерелевантні заголовки (мовні перемикачі, навігація)
+            INVALID_TITLES = ["українська", "english", "головна", "конкурси", "новини"]
+            if not title or len(title) < 10 or title.lower() in INVALID_TITLES:
                 title = nav_title
+            # Якщо і nav_title нерелевантний — пропускаємо
+            if not title or len(title) < 10 or title.lower() in INVALID_TITLES:
+                print(f"[ВФ] Skipped (нерелевантний заголовок): {link}")
+                save_posted_link(link)
+                posted_links.add(link)
+                continue
 
             if is_title_duplicate(title, posted_titles):
                 print(f"[ВФ] Skipped (дубль): {title[:60]}")
