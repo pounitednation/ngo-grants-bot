@@ -1006,9 +1006,9 @@ def run_mva(posted_links: set, posted_titles: set) -> None:
     for a in soup.find_all("a", href=True):
         href = a["href"]
         text = a.get_text(strip=True)
-        # Окремі новини мають URL /novini/[slug] або /novini/[id]-[slug]
-        # Пропускаємо /novini сам по собі і навігаційні посилання
-        if "/novini/" not in href:
+        # Окремі новини МВА мають URL вигляду:
+        # /prescenter/category/86-novini/[slug]
+        if "/prescenter/category/86-novini/" not in href:
             continue
         if href.startswith("/"):
             href = "https://mva.gov.ua" + href
