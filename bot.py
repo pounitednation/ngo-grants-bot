@@ -1055,18 +1055,31 @@ def run_veteranfund(posted_links: set, posted_titles: set) -> None:
                 continue
 
             h1 = page.find("h1")
-            title = h1.get_text(" ", strip=True) if h1 else nav_title
-            # Відкидаємо нерелевантні заголовки (мовні перемикачі, навігація)
-            INVALID_TITLES = ["українська", "english", "головна", "конкурси", "новини"]
-            if not title or len(title) < 10 or title.lower() in INVALID_TITLES:
-                title = nav_title
-            # Якщо і nav_title нерелевантний — пропускаємо
-            if not title or len(title) < 10 or title.lower() in INVALID_TITLES:
-                print(f"[ВФ] Skipped (нерелевантний заголовок): {link}")
+            title = h1.get_text(" ", strip=True) if h1 else ""
+
+            # Відкидаємо нерелевантні заголовки (мовні перемикачі, навігація, кнопки)
+            INVALID_TITLES = [
+                "українська", "english", "головна", "конкурси", "новини",
+                "more details", "детальніше", "докладніше", "читати далі",
+            ]
+            if not title or len(title) < 10 or title.lower().strip() in INVALID_TITLES:
+                # Спробуємо знайти заголовок в інших тегах
+                for tag in ["h2", "h3"]:
+                    h = page.find(tag)
+                    if h:
+                        candidate = h.get_text(" ", strip=True)
+                        if len(candidate) >= 10 and candidate.lower() not in INVALID_TITLES:
+                            title = candidate
+                            break
+
+            # Якщо заголовок все ще нерелевантний — пропускаємо
+            if not title or len(title) < 10 or title.lower().strip() in INVALID_TITLES:
+                print(f"[ВФ] Skipped (нерелевантний заголовок): {link[-50:]}")
                 save_posted_link(link)
                 posted_links.add(link)
                 continue
 
+            # Перевірка дублів — тепер після отримання реального заголовку
             if is_title_duplicate(title, posted_titles):
                 print(f"[ВФ] Skipped (дубль): {title[:60]}")
                 save_posted_link(link)
