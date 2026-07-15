@@ -24,7 +24,7 @@ UCF_URL            = "https://ucf.in.ua/programs"
 # Фаза 2: нові джерела для ВФ і УМФ
 # mva.gov.ua — Міністерство у справах ветеранів, розділ ВФ
 # (урядовий сайт, може не мати Cloudflare на GitHub Actions IP)
-MVA_URL            = "https://mva.gov.ua/prescenter/category/86-novini"
+MVA_URL            = "https://mva.gov.ua/novini"
 # УМФ — пробуємо RSS та сторінку новин
 UMF_RSS            = "https://uyf.gov.ua/rss/"
 UMF_NEWS_URL       = "https://uyf.gov.ua/news"
@@ -41,6 +41,12 @@ EXCLUDE_KEYWORDS = [
     "місцева закупівля", "procurement", "запрошує подати пропозиц",
     "запрошує надати пропозиц", "надати цінову пропозиц",
     "запрошує кваліфікованих виконавц", "запрошує постачальник",
+    # тендери на послуги замасковані під "конкурс"
+    "надання тренерських послуг", "надання консультаційних послуг",
+    "надання послуг з проведення", "надання послуг тренера",
+    "відбір тренер", "відбір фасилітатор", "відбір консультант",
+    "конкурс на надання послуг", "конкурсний відбір тренер",
+    "конкурсний відбір консультант", "конкурсний відбір постачальник",
     # вакансії консультантів/експертів
     "пошук експерта", "пошук експертки", "пошук експерт",
     "запрошує експерта", "запрошує консультант",
@@ -56,7 +62,32 @@ EXCLUDE_KEYWORDS = [
     "анатомія робочих пакетів",    # навчальна стаття
     "грантова звітність у horizon", # навчальна стаття
     "living guidelines",            # аналітика про ЄС-документи
+    "як керувати deliverables",     # навчальна стаття
+    "як писати грантову",          # навчальна стаття
+    "помилки у грантових",         # навчальна стаття
+    "чому відхиляють",             # аналітика
+    "секрети успішної заявки",     # навчальна стаття
+    "national system",             # МОН/НАН — державна політика, не конкурс
 ]
+
+# Аналітичні заголовки GetGrant — публікації які виглядають як новини
+# але насправді є навчальними статтями чи коментарями
+GETGRANT_ANALYTICS_MARKERS = [
+    "як отримати", "як подати заявку", "як написати", "як керувати",
+    "покрокова інструкція", "практичний гід", "що потрібно знати",
+    "топ-", "рейтинг ", "огляд грантів", "аналіз грантів",
+    "підсумки ", "результати конкурсу", "переможці конкурсу",
+    "history of", "анатомія ", "секрети ", "помилки ",
+    "зміни у правилах", "нові вимоги до",
+    # Конкретні організації-джерела аналітики GetGrant (не грантодавці)
+    "mon запускає", "мон запускає", "нан україни оголошує",
+]
+
+
+def is_getgrant_analytics(title: str, description: str) -> bool:
+    """Повертає True якщо пост GetGrant є аналітичною статтею, а не оголошенням гранту."""
+    combined = (title + " " + description).lower()
+    return any(m in combined for m in GETGRANT_ANALYTICS_MARKERS)
 
 EXCLUDE_ORGANIZATIONS = [
     "конвіктус україна",
@@ -292,7 +323,8 @@ def build_simple_message(item_title: str, link: str, description: str, source_la
     return message
 
 
-def run_simple_source(rss_url: str, source_label: str, posted_links: set, limit: int = 20) -> None:
+def run_simple_source(rss_url: str, source_label: str, posted_links: set,
+                      limit: int = 20, analytics_filter: bool = False) -> None:
     feed = feedparser.parse(rss_url)
     if not feed.entries:
         print(f"[{source_label}] No entries")
@@ -311,6 +343,15 @@ def run_simple_source(rss_url: str, source_label: str, posted_links: set, limit:
             item_key = f"{link}#0"
             if item_key not in posted_links:
                 print(f"[{source_label}] Skipped by title: {post_title}")
+                save_posted_link(item_key)
+                posted_links.add(item_key)
+            continue
+
+        # Фільтр аналітичних статей (лише для GetGrant)
+        if analytics_filter and is_getgrant_analytics(post_title, description):
+            item_key = f"{link}#0"
+            if item_key not in posted_links:
+                print(f"[{source_label}] Skipped (аналітика): {post_title[:60]}")
                 save_posted_link(item_key)
                 posted_links.add(item_key)
             continue
@@ -954,29 +995,28 @@ def run_veteranfund(posted_links: set, posted_titles: set) -> None:
 
 
 def run_mva(posted_links: set, posted_titles: set) -> None:
-    """МВА — Міністерство у справах ветеранів, розділ Ветеранського фонду.
-    Публікує новини про відкриття конкурсів ВФ з посиланнями на деталі."""
+    """МВА — Міністерство у справах ветеранів, стрічка новин /novini.
+    Фільтруємо лише новини про конкурси/гранти ВФ."""
     soup = fetch_html(MVA_URL)
     if not soup:
         print("[МВА/ВФ] Не вдалось завантажити сторінку")
         return
 
-    # Шукаємо посилання на окремі новини про конкурси
     news_links = []
     for a in soup.find_all("a", href=True):
         href = a["href"]
-        # Новини МВА про конкурси ВФ мають URL вигляду:
-        # /prescenter/category/86-novini/[slug-назви-конкурсу]
-        # Навігаційні хаб-сторінки (/vartogo, /vartobiznes) НЕ беремо
-        if "/prescenter/category/86-novini/" in href:
-            if href.startswith("/"):
-                href = "https://mva.gov.ua" + href
-            text = a.get_text(strip=True)
-            # Беремо лише якщо є ключові слова в тексті або URL
-            if any(kw in text.lower() or kw in href.lower()
-                   for kw in ["конкурс", "грант", "варто", "програм", "contest"]):
-                if href not in [l for l, _ in news_links]:
-                    news_links.append((href, text))
+        text = a.get_text(strip=True)
+        # Окремі новини мають URL /novini/[slug] або /novini/[id]-[slug]
+        # Пропускаємо /novini сам по собі і навігаційні посилання
+        if "/novini/" not in href:
+            continue
+        if href.startswith("/"):
+            href = "https://mva.gov.ua" + href
+        # Беремо лише новини про конкурси/гранти ВФ
+        if any(kw in text.lower() or kw in href.lower()
+               for kw in ["конкурс", "грант", "варто", "програм", "фінансуванн"]):
+            if href not in [l for l, _ in news_links]:
+                news_links.append((href, text))
 
     if not news_links:
         print("[МВА/ВФ] Жодної новини про конкурси не знайдено")
@@ -1137,7 +1177,8 @@ def main():
     run_chaszmin(posted_links)
     run_simple_source(GURT_RSS,     "ГУРТ — джерело",                posted_links)
     run_simple_source(PROSTIR_RSS,  "Громадський Простір — джерело", posted_links)
-    run_simple_source(GETGRANT_RSS, "GetGrant — джерело",            posted_links)
+    run_simple_source(GETGRANT_RSS, "GetGrant — джерело", posted_links,
+                      analytics_filter=True)
 
     # HTML-скрейпери — загальні
     run_isar(posted_links)
