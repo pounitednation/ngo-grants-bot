@@ -55,6 +55,12 @@ EXCLUDE_KEYWORDS = [
     "reoi", "eoi ",
     "пакет закупівель", "запит пропозицій",
     "уфсі", "уфсі/фонд",
+    # закупівля послуг через ГО в рамках донорських програм
+    "послуги страхування", "каско", "добровільного страхування",
+    "страхування автомобіл", "страхування транспортн",
+    "договір про виконавче партнерство",
+    "виконавче партнерство між го",
+    "реалізує проєктний захід",
     # вакансії консультантів/експертів
     "пошук експерта", "пошук експертки", "пошук експерт",
     "запрошує експерта", "запрошує консультант",
@@ -373,8 +379,9 @@ def run_simple_source(rss_url: str, source_label: str, posted_links: set,
 
             item_title = make_item_title(item_text, post_title)
 
-            if is_excluded(post_title) or is_excluded(item_title) or is_excluded(item_text):
-                print(f"[{source_label}] Skipped item: {item_title}")
+            if (is_excluded(post_title) or is_excluded(item_title)
+                    or is_excluded(item_text) or is_excluded(description)):
+                print(f"[{source_label}] Skipped item: {item_title[:60]}")
                 save_posted_link(item_key)
                 posted_links.add(item_key)
                 continue
