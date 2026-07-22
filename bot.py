@@ -47,10 +47,11 @@ EXCLUDE_KEYWORDS = [
     "відбір тренер", "відбір фасилітатор", "відбір консультант",
     "конкурс на надання послуг", "конкурсний відбір тренер",
     "конкурсний відбір консультант", "конкурсний відбір постачальник",
-    # EOI/REOI — запрошення до подання зацікавлень (World Bank, KfW, ЄБРР формат)
+    # EOI/REOI — всі варіанти написання
     "запрошення організацій до подання зацікавлень",
     "запрошення до подання зацікавлень",
-    "подання зацікавлень",
+    "запрошення до висловлення зацікавленост",
+    "подання зацікавлень", "висловлення зацікавленост",
     "expression of interest", "request for expression",
     "reoi", "eoi ",
     "пакет закупівель", "запит пропозицій",
@@ -61,11 +62,21 @@ EXCLUDE_KEYWORDS = [
     "договір про виконавче партнерство",
     "виконавче партнерство між го",
     "реалізує проєктний захід",
-    # вакансії консультантів/експертів
+    # вакансії та відбір спеціалістів
     "пошук експерта", "пошук експертки", "пошук експерт",
     "запрошує експерта", "запрошує консультант",
     "набір консультант", "набір тренер",
     "вакансія", "вакансії", "job opening", "position available",
+    "спеціаліст/ка", "спеціаліста/ки", "фахівець/фахівчиня",
+    "invites you to submit services", "submit services of",
+    "надання послуг соціального", "послуги соціального",
+    # допомога для фізичних осіб (не гранти для організацій)
+    "реєстрація на отримання", "запис на отримання",
+    "цільова благодійна допомога",
+    "правова підтримка для", "юридична підтримка для",
+    # PR-пости про організації (не оголошення конкурсів)
+    "коротко про бф", "коротко про го", "коротко про нго",
+    "про діяльність фонду", "хто ми є",
     # GetGrant-специфічні не-грантові матеріали:
     # самореклама, аналітика, освітні статті, звіти про заходи
     "appeared first on getgrant",   # хвіст WordPress-постів блогу
@@ -1213,6 +1224,157 @@ def run_umf_phase2(posted_links: set, posted_titles: set) -> None:
 
 
 # ---------------------------------------------------------------------------
+# TELEGRAM-КАНАЛИ через t.me/s/ (публічна веб-версія)
+# Унікальний ключ для кожного повідомлення: @channel/message_id
+# Відстежуємо лише нові пости — порівнюємо message_id з posted_links.
+# ---------------------------------------------------------------------------
+
+TG_CHANNELS = [
+    # (@username, "Назва для логу та повідомлення")
+    ("grantsua",        "Гранти UA"),
+    ("grantovyphishky", "Грантові фішки"),
+    ("houseofeurope",   "House of Europe"),   # офіційний канал ЄС для України — унікальний контент
+    ("grants_here",     "Гранти та можливості"),  # Connection Agency — 16K+ підписників, якісні гранти
+]
+
+# Маркери рекламного/нерелевантного контенту в Telegram-каналах
+TG_JUNK_MARKERS = [
+    # Реклама власних курсів/послуг @grantovyphishky
+    "консультацію", "замовити консультацію", "мій курс", "мої курси",
+    "придбати курс", "навчання у мене", "записатись до мене",
+    "безкоштовні курси", "освітні послуги", "наставництво",
+    "підписатись на інстаграм", "підписуйтесь на інстаграм",
+    # Реклама @grantsua
+    "допомога бізнесу і громадам", "написати нам",
+    # Загальні ознаки нерекламних але нерелевантних постів
+    "вакансія", "вакансії", "job opening",
+    # Ключові слова тендерів (вже є в EXCLUDE_KEYWORDS але дублюємо для надійності)
+    "запит цінових пропозицій", "тендер на закупівлю",
+]
+
+
+def is_tg_junk(text: str) -> bool:
+    t = text.lower()
+    return any(m in t for m in TG_JUNK_MARKERS) or is_excluded(text)
+
+
+def run_tg_channel(username: str, channel_name: str,
+                   posted_links: set, posted_titles: set) -> None:
+    """Читає публічний Telegram-канал через t.me/s/ веб-версію.
+
+    Кожне повідомлення ідентифікується як @username/message_id.
+    Публікує лише нові пости (не в posted_links), не старіші ніж 7 днів,
+    після фільтрації реклами і тендерів.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    url = f"https://t.me/s/{username}"
+    try:
+        resp = requests.get(
+            url, timeout=60,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                   "AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"}
+        )
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"[@{username}] Не вдалось завантажити: {e}")
+        return
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    messages = soup.find_all("div", class_="tgme_widget_message_wrap")
+
+    if not messages:
+        print(f"[@{username}] Повідомлень не знайдено (можливо заблоковано або приватний)")
+        return
+
+    print(f"[@{username}] Знайдено {len(messages)} повідомлень")
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+
+    for msg in reversed(messages):  # від старіших до новіших
+        # Унікальний ID повідомлення
+        msg_link_tag = msg.find("a", class_="tgme_widget_message_date")
+        if not msg_link_tag:
+            continue
+        msg_url = msg_link_tag.get("href", "")
+        if not msg_url:
+            continue
+
+        # Ключ для posted_links
+        item_key = f"tg_{username}_{msg_url.split('/')[-1]}"
+        if item_key in posted_links:
+            continue
+
+        # Перевірка дати — не публікуємо старі пости
+        time_tag = msg_link_tag.find("time")
+        if time_tag and time_tag.get("datetime"):
+            try:
+                msg_dt = datetime.fromisoformat(
+                    time_tag["datetime"].replace("Z", "+00:00")
+                )
+                if msg_dt < cutoff:
+                    # Старий пост — маркуємо як оброблений і пропускаємо
+                    save_posted_link(item_key)
+                    posted_links.add(item_key)
+                    continue
+            except ValueError:
+                pass
+
+        # Текст повідомлення
+        text_div = msg.find("div", class_="tgme_widget_message_text")
+        if not text_div:
+            # Можливо пост без тексту (фото/відео без підпису)
+            save_posted_link(item_key)
+            posted_links.add(item_key)
+            continue
+
+        text = text_div.get_text(" ", strip=True)
+        if len(text) < 30:
+            save_posted_link(item_key)
+            posted_links.add(item_key)
+            continue
+
+        # Фільтр реклами і тендерів
+        if is_tg_junk(text):
+            print(f"[@{username}] Skipped (реклама/тендер): {text[:60]}")
+            save_posted_link(item_key)
+            posted_links.add(item_key)
+            continue
+
+        # Перший рядок як заголовок
+        first_line = text.split("\n")[0].strip()[:90]
+        if not first_line:
+            first_line = text[:90]
+
+        # Дедуплікація за заголовком
+        if is_title_duplicate(first_line, posted_titles):
+            print(f"[@{username}] Skipped (дубль): {first_line[:60]}")
+            save_posted_link(item_key)
+            posted_links.add(item_key)
+            continue
+
+        print(f"[@{username}] Processing: {first_line[:60]}")
+
+        summary = text[:600] + "..." if len(text) > 600 else text
+        deadline = extract_deadline(text)
+
+        msg_text = f"📌 <b>{first_line}</b>\n"
+        if deadline:
+            msg_text += f"📅 <b>Дедлайн:</b> {deadline}\n"
+        msg_text += f"\n{summary}\n\n🔗 <a href=\"{msg_url}\">{channel_name} — джерело</a>\n"
+
+        try:
+            response = send_telegram_message(msg_text)
+            if response.status_code == 200:
+                save_posted_link(item_key)
+                posted_links.add(item_key)
+                save_title_hash(first_line, posted_titles)
+            time.sleep(2)
+        except Exception as e:
+            print(f"[@{username}] ERROR {item_key}: {e}")
+
+
+# ---------------------------------------------------------------------------
 # MAIN
 # ---------------------------------------------------------------------------
 
@@ -1233,9 +1395,9 @@ def main():
 
     # HTML-скрейпери — державні фонди
     run_ucf(posted_links, posted_titles)
-    run_veteranfund(posted_links, posted_titles)    # Ветеранський фонд
-    run_umf_phase2(posted_links, posted_titles)     # УМФ
+    run_veteranfund(posted_links, posted_titles)
+    run_umf_phase2(posted_links, posted_titles)
 
-
-if __name__ == "__main__":
-    main()
+    # Telegram-канали через t.me/s/
+    for username, channel_name in TG_CHANNELS:
+        run_tg_channel(username, channel_name, posted_links, posted_titles)
