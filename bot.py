@@ -9,28 +9,32 @@ from bs4 import BeautifulSoup
 BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 POSTED_LINKS_FILE = "posted_links.txt"
+POSTED_TITLES_FILE = "posted_titles.txt"
 
 # ---------------------------------------------------------------------------
 # ДЖЕРЕЛА
 # ---------------------------------------------------------------------------
-CHASZMIN_RSS       = "https://chaszmin.com.ua/category/granty-tut/feed/"
-GURT_RSS           = "https://gurt.org.ua/rss/section/grants/"
-PROSTIR_RSS        = "https://www.prostir.ua/?feed=rss2&post_type=grants"
-GETGRANT_RSS       = "https://getgrant.ua/grants-and-funding/?feed=rss2"
-DECENTRALIZATION_RSS = None   # 403 Cloudflare — вимкнено
-ISAR_URL           = "https://ednannia.ua/181-contests"
-IRF_URL            = "https://www.irf.ua/grants/contests/"
-UCF_URL            = "https://ucf.in.ua/programs"
-# Фаза 2: ВФ — читаємо RSS та сторінку veteranfund.com.ua
-# mva.gov.ua — занадто повільний (Read timeout навіть з 60с, нестабільний)
-VF_RSS             = "https://veteranfund.com.ua/contests/feed/"
-VF_COMPETITIONS    = "https://veteranfund.com.ua/competitions/"
-# УМФ — пробуємо RSS та сторінку новин
-UMF_RSS            = "https://uyf.gov.ua/rss/"
-UMF_NEWS_URL       = "https://uyf.gov.ua/news"
+CHASZMIN_RSS  = "https://chaszmin.com.ua/category/granty-tut/feed/"
+GURT_RSS      = "https://gurt.org.ua/rss/section/grants/"
+PROSTIR_RSS   = "https://www.prostir.ua/?feed=rss2&post_type=grants"
+GETGRANT_RSS  = "https://getgrant.ua/grants-and-funding/?feed=rss2"
+ISAR_URL      = "https://ednannia.ua/181-contests"
+IRF_URL       = "https://www.irf.ua/grants/contests/"
+UCF_URL       = "https://ucf.in.ua/programs"
+VF_RSS        = "https://veteranfund.com.ua/contests/feed/"
+VF_COMPETITIONS = "https://veteranfund.com.ua/competitions/"
+UMF_RSS       = "https://uyf.gov.ua/rss/"
+UMF_NEWS_URL  = "https://uyf.gov.ua/news"
+
+TG_CHANNELS = [
+    ("grantsua",        "Гранти UA"),
+    ("grantovyphishky", "Грантові фішки"),
+    ("houseofeurope",   "House of Europe"),
+    ("grants_here",     "Гранти та можливості"),
+]
 
 # ---------------------------------------------------------------------------
-# ФІЛЬТРИ — тендери / закупівлі / вакансії-консультантів
+# ФІЛЬТРИ
 # ---------------------------------------------------------------------------
 EXCLUDE_KEYWORDS = [
     "тендер", "закупівл", "запит цінових пропозицій", "зцп", "rfq", "rfp",
@@ -41,13 +45,11 @@ EXCLUDE_KEYWORDS = [
     "місцева закупівля", "procurement", "запрошує подати пропозиц",
     "запрошує надати пропозиц", "надати цінову пропозиц",
     "запрошує кваліфікованих виконавц", "запрошує постачальник",
-    # тендери на послуги замасковані під "конкурс"
     "надання тренерських послуг", "надання консультаційних послуг",
     "надання послуг з проведення", "надання послуг тренера",
     "відбір тренер", "відбір фасилітатор", "відбір консультант",
     "конкурс на надання послуг", "конкурсний відбір тренер",
     "конкурсний відбір консультант", "конкурсний відбір постачальник",
-    # EOI/REOI — всі варіанти написання
     "запрошення організацій до подання зацікавлень",
     "запрошення до подання зацікавлень",
     "запрошення до висловлення зацікавленост",
@@ -56,13 +58,11 @@ EXCLUDE_KEYWORDS = [
     "reoi", "eoi ",
     "пакет закупівель", "запит пропозицій",
     "уфсі", "уфсі/фонд",
-    # закупівля послуг через ГО в рамках донорських програм
     "послуги страхування", "каско", "добровільного страхування",
     "страхування автомобіл", "страхування транспортн",
     "договір про виконавче партнерство",
     "виконавче партнерство між го",
     "реалізує проєктний захід",
-    # вакансії та відбір спеціалістів
     "пошук експерта", "пошук експертки", "пошук експерт",
     "запрошує експерта", "запрошує консультант",
     "набір консультант", "набір тренер",
@@ -70,33 +70,23 @@ EXCLUDE_KEYWORDS = [
     "спеціаліст/ка", "спеціаліста/ки", "фахівець/фахівчиня",
     "invites you to submit services", "submit services of",
     "надання послуг соціального", "послуги соціального",
-    # допомога для фізичних осіб (не гранти для організацій)
     "реєстрація на отримання", "запис на отримання",
     "цільова благодійна допомога",
     "правова підтримка для", "юридична підтримка для",
-    # PR-пости про організації (не оголошення конкурсів)
     "коротко про бф", "коротко про го", "коротко про нго",
     "про діяльність фонду", "хто ми є",
-    # GetGrant-специфічні не-грантові матеріали:
-    # самореклама, аналітика, освітні статті, звіти про заходи
-    "appeared first on getgrant",   # хвіст WordPress-постів блогу
-    "getgrant отримав",             # новини про самих GetGrant
-    "getgrant service отримав",
-    "summit grant fest",            # репортаж про захід
-    "мав честь бути запрошеним",   # особиста нотатка
-    "анатомія робочих пакетів",    # навчальна стаття
-    "грантова звітність у horizon", # навчальна стаття
-    "living guidelines",            # аналітика про ЄС-документи
-    "як керувати deliverables",     # навчальна стаття
-    "як писати грантову",          # навчальна стаття
-    "помилки у грантових",         # навчальна стаття
-    "чому відхиляють",             # аналітика
-    "секрети успішної заявки",     # навчальна стаття
-    "national system",             # МОН/НАН — державна політика, не конкурс
+    "appeared first on getgrant",
+    "getgrant отримав", "getgrant service отримав",
+    "summit grant fest", "мав честь бути запрошеним",
+    "анатомія робочих пакетів", "грантова звітність у horizon",
+    "living guidelines", "як керувати deliverables",
+    "як писати грантову", "помилки у грантових",
+    "чому відхиляють", "секрети успішної заявки",
+    "national system",
 ]
 
-# Аналітичні заголовки GetGrant — публікації які виглядають як новини
-# але насправді є навчальними статтями чи коментарями
+EXCLUDE_ORGANIZATIONS = ["конвіктус україна"]
+
 GETGRANT_ANALYTICS_MARKERS = [
     "як отримати", "як подати заявку", "як написати", "як керувати",
     "покрокова інструкція", "практичний гід", "що потрібно знати",
@@ -104,18 +94,15 @@ GETGRANT_ANALYTICS_MARKERS = [
     "підсумки ", "результати конкурсу", "переможці конкурсу",
     "history of", "анатомія ", "секрети ", "помилки ",
     "зміни у правилах", "нові вимоги до",
-    # Конкретні організації-джерела аналітики GetGrant (не грантодавці)
     "mon запускає", "мон запускає", "нан україни оголошує",
 ]
 
-
-def is_getgrant_analytics(title: str, description: str) -> bool:
-    """Повертає True якщо пост GetGrant є аналітичною статтею, а не оголошенням гранту."""
-    combined = (title + " " + description).lower()
-    return any(m in combined for m in GETGRANT_ANALYTICS_MARKERS)
-
-EXCLUDE_ORGANIZATIONS = [
-    "конвіктус україна",
+TG_JUNK_MARKERS = [
+    "замовити консультацію", "мій курс", "мої курси",
+    "придбати курс", "навчання у мене", "записатись до мене",
+    "підписатись на інстаграм", "підписуйтесь на інстаграм",
+    "написати нам",
+    "запит цінових пропозицій", "тендер на закупівлю",
 ]
 
 
@@ -127,8 +114,18 @@ def is_excluded(text: str) -> bool:
     )
 
 
+def is_getgrant_analytics(title: str, description: str) -> bool:
+    combined = (title + " " + description).lower()
+    return any(m in combined for m in GETGRANT_ANALYTICS_MARKERS)
+
+
+def is_tg_junk(text: str) -> bool:
+    t = text.lower()
+    return any(m in t for m in TG_JUNK_MARKERS) or is_excluded(text)
+
+
 # ---------------------------------------------------------------------------
-# ТРЕКІНГ ОПУБЛІКОВАНИХ ПОСИЛАНЬ
+# ТРЕКІНГ
 # ---------------------------------------------------------------------------
 
 def load_posted_links() -> set:
@@ -144,159 +141,70 @@ def save_posted_link(link: str) -> None:
         f.write(link + "\n")
 
 
+def load_posted_titles() -> set:
+    try:
+        with open(POSTED_TITLES_FILE, "r", encoding="utf-8") as f:
+            return set(f.read().splitlines())
+    except FileNotFoundError:
+        return set()
+
+
+def title_hash(title: str) -> str:
+    normalized = re.sub(r"\s+", " ", title.strip().lower())[:80]
+    return hashlib.md5(normalized.encode("utf-8")).hexdigest()
+
+
+def is_title_duplicate(title: str, posted_titles: set) -> bool:
+    return title_hash(title) in posted_titles
+
+
+def save_title_hash(title: str, posted_titles: set) -> None:
+    h = title_hash(title)
+    if h not in posted_titles:
+        posted_titles.add(h)
+        with open(POSTED_TITLES_FILE, "a", encoding="utf-8") as f:
+            f.write(h + "\n")
+
+
 # ---------------------------------------------------------------------------
 # TELEGRAM
 # ---------------------------------------------------------------------------
 
 def send_telegram_message(message: str) -> requests.Response:
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    response = requests.post(
-        url,
-        data={
-            "chat_id": CHAT_ID,
-            "text": message,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": False,
-        },
-    )
-    print(response.text)
-    return response
+    return requests.post(url, data={
+        "chat_id": CHAT_ID,
+        "text": message,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": False,
+    })
 
 
 # ---------------------------------------------------------------------------
-# CHASZMIN — повний формат (Дедлайн / Де / Галузі / Для кого / Деталі)
+# УТИЛІТИ
 # ---------------------------------------------------------------------------
 
-JUNK_MARKERS = [
-    "ПІДРУЧНИК", "ПОСІБНИК", "ПОРАДНИК", "КАТАЛОГ ФОНДІВ",
-    "ШКОЛА ГРАНТОЗНАВСТВА", "Подати заявку ТУТ", "HOW TO GET",
-    "Можливо, ви захочете", "Замовити оформлення",
-    "Ми допомагаємо в оформленні",
-]
-
-
-def is_junk(sentence: str) -> bool:
-    return any(marker.lower() in sentence.lower() for marker in JUNK_MARKERS)
-
-
-def process_chaszmin_entry(title: str, link: str) -> str:
-    page = requests.get(link, timeout=30)
-    soup = BeautifulSoup(page.text, "html.parser")
-    article = soup.find("article")
-    text = article.get_text(" ", strip=True) if article else soup.get_text(" ", strip=True)
-
-    deadline = "не зазначено"
-    match = re.search(r"ДЕДЛАЙН:\s*(.*?)\s*(ДЕ:|ГАЛУЗІ:)", text, re.IGNORECASE)
-    if match:
-        deadline = match.group(1).strip()
-
-    location = "не зазначено"
-    match = re.search(r"ДЕ:\s*(.*?)\s*ГАЛУЗІ:", text, re.IGNORECASE)
-    if match:
-        location = match.group(1).strip()
-
-    sectors = "не зазначено"
-    match = re.search(r"ГАЛУЗІ:\s*(.*?)(Ми допомагаємо|Сума|Для кого|$)", text, re.IGNORECASE)
-    if match:
-        sectors = match.group(1).strip()
-
-    target = ""
-    match = re.search(
-        r"Для кого[:\s]*(.*?)(До участі допускаються|Сума|Дедлайн[:\s]|$)",
-        text, re.IGNORECASE,
-    )
-    if match:
-        raw_target = match.group(1).strip()
-        sentences = re.split(r"(?<=[.!?])\s+", raw_target)
-        clean_sentences = []
-        for s in sentences:
-            s = s.strip()
-            if not s:
-                continue
-            if is_junk(s):
-                break
-            clean_sentences.append(s)
-        target = " ".join(clean_sentences).strip()
-        if len(target) > 400:
-            target = target[:400] + "..."
-
-    search_zone = text
-    for_kogo_match = re.search(r"Для кого", search_zone, re.IGNORECASE)
-    for_kogo_pos = for_kogo_match.start() if for_kogo_match else len(search_zone)
-
-    intro_markers = [r"Замовити оформлення грантової заявки", r"Подати заявку ТУТ"]
-    last_cut = 0
-    head_zone = search_zone[:for_kogo_pos]
-    for marker in intro_markers:
-        m = list(re.finditer(marker, head_zone, re.IGNORECASE))
-        if m:
-            last_cut = max(last_cut, m[-1].end())
-    search_zone = search_zone[last_cut:for_kogo_pos]
-
-    summary = ""
-    paragraphs = re.split(r"(?<=[.!?])\s+", search_zone)
-    for p in paragraphs:
-        p = p.strip()
-        if len(p) < 80:
-            continue
-        if is_junk(p):
-            continue
-        summary = p
-        break
-
-    if not summary:
-        summary = title
-    if len(summary) > 800:
-        summary = summary[:800] + "..."
-
-    message = f"""
-🌍 <b>{title}</b>
-📅 <b>Дедлайн:</b> {deadline}
-🌍 <b>Де:</b> {location}
-🎯 <b>Галузі:</b> {sectors}
-"""
-    if target:
-        message += f"""
-👥 <b>Для кого:</b>
-{target}
-"""
-    message += f"""
-💡 <b>Деталі:</b>
-{summary}
-🔗 <a href="{link}">Деталі гранту</a>
-"""
-    return message
-
-
-def run_chaszmin(posted_links: set) -> None:
-    feed = feedparser.parse(CHASZMIN_RSS)
-    if not feed.entries:
-        print("[chaszmin] No entries")
-        return
-    for entry in reversed(feed.entries[:10]):
-        title = entry.title.strip()
-        link = entry.link
-        if link in posted_links:
-            continue
-        if is_excluded(title):
-            print(f"[chaszmin] Skipped: {title}")
-            save_posted_link(link)
-            posted_links.add(link)
-            continue
-        print(f"[chaszmin] Processing: {title}")
+def fetch_html(url: str, timeout: int = 60, retries: int = 2):
+    import warnings
+    try:
+        from bs4 import XMLParsedAsHTMLWarning
+        warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+    except ImportError:
+        pass
+    for attempt in range(retries):
         try:
-            message = process_chaszmin_entry(title, link)
-            response = send_telegram_message(message)
-            if response.status_code == 200:
-                save_posted_link(link)
-                posted_links.add(link)
+            resp = requests.get(url, timeout=timeout,
+                                headers={"User-Agent": "Mozilla/5.0 ngo-grants-bot/1.0"})
+            resp.raise_for_status()
+            return BeautifulSoup(resp.text, "html.parser")
         except Exception as e:
-            print(f"[chaszmin] ERROR {link}: {e}")
+            if attempt < retries - 1:
+                print(f"[fetch_html] Retry {attempt+1} for {url}: {e}")
+                time.sleep(5)
+            else:
+                print(f"[fetch_html] ERROR {url}: {e}")
+                return None
 
-
-# ---------------------------------------------------------------------------
-# СПІЛЬНІ УТИЛІТИ ДЛЯ RSS-ДЖЕРЕЛ (GURT / PROSTIR / GETGRANT)
-# ---------------------------------------------------------------------------
 
 DEADLINE_PATTERNS = [
     r"[Дд]едлайн[а-яіїєʼ'\s:]*[:\s]+([^.\n]{3,80})",
@@ -305,6 +213,15 @@ DEADLINE_PATTERNS = [
     r"[Тт]ермін подання[а-яіїєʼ'\s]*[:\s]+([^.\n]{3,80})",
 ]
 
+UKRAINIAN_MONTHS = {
+    "січня": 1, "лютого": 2, "березня": 3, "квітня": 4,
+    "травня": 5, "червня": 6, "липня": 7, "серпня": 8,
+    "вересня": 9, "жовтня": 10, "листопада": 11, "грудня": 12,
+    "січень": 1, "лютий": 2, "березень": 3, "квітень": 4,
+    "травень": 5, "червень": 6, "липень": 7, "серпень": 8,
+    "вересень": 9, "жовтень": 10, "листопад": 11, "грудень": 12,
+}
+
 
 def extract_deadline(text: str) -> str:
     for pattern in DEADLINE_PATTERNS:
@@ -312,6 +229,38 @@ def extract_deadline(text: str) -> str:
         if match:
             return match.group(1).strip().rstrip(".,;")
     return ""
+
+
+def is_deadline_passed(deadline_str: str) -> bool:
+    from datetime import date
+    today = date.today()
+    text = deadline_str.strip().lower()
+    match = re.search(
+        r"(\d{1,2})\s+(" + "|".join(UKRAINIAN_MONTHS.keys()) + r")\s+(\d{4})", text)
+    if match:
+        try:
+            return date(int(match.group(3)),
+                        UKRAINIAN_MONTHS[match.group(2)],
+                        int(match.group(1))) < today
+        except ValueError:
+            pass
+    match = re.search(r"(\d{1,2})[./\-](\d{1,2})[./\-](\d{4})", text)
+    if match:
+        try:
+            return date(int(match.group(3)),
+                        int(match.group(2)),
+                        int(match.group(1))) < today
+        except ValueError:
+            pass
+    match = re.search(r"(\d{4})-(\d{2})-(\d{2})", text)
+    if match:
+        try:
+            return date(int(match.group(1)),
+                        int(match.group(2)),
+                        int(match.group(3))) < today
+        except ValueError:
+            pass
+    return False
 
 
 def clean_html_description(raw_html: str) -> str:
@@ -333,20 +282,136 @@ def make_item_title(item_text: str, fallback_title: str, max_len: int = 90) -> s
     first_sentence = re.split(r"(?<=[.!?])\s+", item_text.strip())[0].strip()
     if not first_sentence:
         return fallback_title
-    if len(first_sentence) > max_len:
-        first_sentence = first_sentence[:max_len].rstrip() + "..."
-    return first_sentence
+    return first_sentence[:max_len].rstrip() + ("..." if len(first_sentence) > max_len else "")
 
 
-def build_simple_message(item_title: str, link: str, description: str, source_label: str) -> str:
+def build_simple_message(item_title: str, link: str, description: str,
+                         source_label: str) -> str:
     deadline = extract_deadline(description)
     summary = description[:600] + "..." if len(description) > 600 else description
-    message = f"📌 <b>{item_title}</b>\n"
+    msg = f"📌 <b>{item_title}</b>\n"
     if deadline:
-        message += f"📅 <b>Дедлайн:</b> {deadline}\n"
-    message += f"\n{summary}\n\n🔗 <a href=\"{link}\">{source_label}</a>\n"
-    return message
+        msg += f"📅 <b>Дедлайн:</b> {deadline}\n"
+    msg += f"\n{summary}\n\n🔗 <a href=\"{link}\">{source_label}</a>\n"
+    return msg
 
+
+# ---------------------------------------------------------------------------
+# CHASZMIN
+# ---------------------------------------------------------------------------
+
+JUNK_MARKERS = [
+    "ПІДРУЧНИК", "ПОСІБНИК", "ПОРАДНИК", "КАТАЛОГ ФОНДІВ",
+    "ШКОЛА ГРАНТОЗНАВСТВА", "Подати заявку ТУТ", "HOW TO GET",
+    "Можливо, ви захочете", "Замовити оформлення",
+    "Ми допомагаємо в оформленні",
+]
+
+
+def is_junk(sentence: str) -> bool:
+    return any(m.lower() in sentence.lower() for m in JUNK_MARKERS)
+
+
+def process_chaszmin_entry(title: str, link: str) -> str:
+    page = requests.get(link, timeout=30)
+    soup = BeautifulSoup(page.text, "html.parser")
+    article = soup.find("article")
+    text = article.get_text(" ", strip=True) if article else soup.get_text(" ", strip=True)
+
+    deadline = "не зазначено"
+    m = re.search(r"ДЕДЛАЙН:\s*(.*?)\s*(ДЕ:|ГАЛУЗІ:)", text, re.IGNORECASE)
+    if m:
+        deadline = m.group(1).strip()
+
+    location = "не зазначено"
+    m = re.search(r"ДЕ:\s*(.*?)\s*ГАЛУЗІ:", text, re.IGNORECASE)
+    if m:
+        location = m.group(1).strip()
+
+    sectors = "не зазначено"
+    m = re.search(r"ГАЛУЗІ:\s*(.*?)(Ми допомагаємо|Сума|Для кого|$)", text, re.IGNORECASE)
+    if m:
+        sectors = m.group(1).strip()
+
+    target = ""
+    m = re.search(
+        r"Для кого[:\s]*(.*?)(До участі допускаються|Сума|Дедлайн[:\s]|$)",
+        text, re.IGNORECASE)
+    if m:
+        raw = m.group(1).strip()
+        sentences = re.split(r"(?<=[.!?])\s+", raw)
+        clean = []
+        for s in sentences:
+            s = s.strip()
+            if not s:
+                continue
+            if is_junk(s):
+                break
+            clean.append(s)
+        target = " ".join(clean).strip()
+        if len(target) > 400:
+            target = target[:400] + "..."
+
+    search_zone = text
+    fk = re.search(r"Для кого", search_zone, re.IGNORECASE)
+    fk_pos = fk.start() if fk else len(search_zone)
+    last_cut = 0
+    head = search_zone[:fk_pos]
+    for marker in [r"Замовити оформлення грантової заявки", r"Подати заявку ТУТ"]:
+        ms = list(re.finditer(marker, head, re.IGNORECASE))
+        if ms:
+            last_cut = max(last_cut, ms[-1].end())
+    search_zone = search_zone[last_cut:fk_pos]
+
+    summary = ""
+    for p in re.split(r"(?<=[.!?])\s+", search_zone):
+        p = p.strip()
+        if len(p) < 80 or is_junk(p):
+            continue
+        summary = p
+        break
+    if not summary:
+        summary = title
+    if len(summary) > 800:
+        summary = summary[:800] + "..."
+
+    msg = f"\n🌍 <b>{title}</b>\n📅 <b>Дедлайн:</b> {deadline}\n🌍 <b>Де:</b> {location}\n🎯 <b>Галузі:</b> {sectors}\n"
+    if target:
+        msg += f"\n👥 <b>Для кого:</b>\n{target}\n"
+    msg += f"\n💡 <b>Деталі:</b>\n{summary}\n🔗 <a href=\"{link}\">Деталі гранту</a>\n"
+    return msg
+
+
+def run_chaszmin(posted_links: set) -> None:
+    feed = feedparser.parse(CHASZMIN_RSS)
+    if not feed.entries:
+        print("[chaszmin] No entries")
+        return
+    for entry in reversed(feed.entries[:10]):
+        title = entry.title.strip()
+        link = entry.link
+        if link in posted_links:
+            continue
+        if is_excluded(title):
+            print(f"[chaszmin] Skipped: {title}")
+            save_posted_link(link)
+            posted_links.add(link)
+            continue
+        print(f"[chaszmin] Processing: {title}")
+        try:
+            msg = process_chaszmin_entry(title, link)
+            resp = send_telegram_message(msg)
+            print(resp.text)
+            if resp.status_code == 200:
+                save_posted_link(link)
+                posted_links.add(link)
+        except Exception as e:
+            print(f"[chaszmin] ERROR {link}: {e}")
+
+
+# ---------------------------------------------------------------------------
+# RSS ДЖЕРЕЛА (GURT / PROSTIR / GETGRANT)
+# ---------------------------------------------------------------------------
 
 def run_simple_source(rss_url: str, source_label: str, posted_links: set,
                       limit: int = 20, analytics_filter: bool = False) -> None:
@@ -358,12 +423,11 @@ def run_simple_source(rss_url: str, source_label: str, posted_links: set,
     for entry in reversed(feed.entries[:limit]):
         post_title = entry.title.strip()
         link = entry.link
-        raw_description = getattr(entry, "description", "") or getattr(entry, "summary", "")
-        description = clean_html_description(raw_description)
+        raw_desc = getattr(entry, "description", "") or getattr(entry, "summary", "")
+        description = clean_html_description(raw_desc)
         if not description:
             description = post_title
 
-        # Фільтр за RSS-заголовком ще до розбиття на пункти
         if is_excluded(post_title):
             item_key = f"{link}#0"
             if item_key not in posted_links:
@@ -372,7 +436,6 @@ def run_simple_source(rss_url: str, source_label: str, posted_links: set,
                 posted_links.add(item_key)
             continue
 
-        # Фільтр аналітичних статей (лише для GetGrant)
         if analytics_filter and is_getgrant_analytics(post_title, description):
             item_key = f"{link}#0"
             if item_key not in posted_links:
@@ -399,9 +462,10 @@ def run_simple_source(rss_url: str, source_label: str, posted_links: set,
 
             print(f"[{source_label}] Processing: {item_title}")
             try:
-                message = build_simple_message(item_title, link, item_text, source_label)
-                response = send_telegram_message(message)
-                if response.status_code == 200:
+                msg = build_simple_message(item_title, link, item_text, source_label)
+                resp = send_telegram_message(msg)
+                print(resp.text)
+                if resp.status_code == 200:
                     save_posted_link(item_key)
                     posted_links.add(item_key)
             except Exception as e:
@@ -409,100 +473,10 @@ def run_simple_source(rss_url: str, source_label: str, posted_links: set,
 
 
 # ---------------------------------------------------------------------------
-# HTML-СКРЕЙПЕРИ (ІСАР Єднання / МФ «Відродження»)
-# Ці сайти не мають RSS, тому читаємо список активних конкурсів напряму.
-# Унікальний ключ — нормалізований URL сторінки конкурсу.
+# ІСАР Єднання
 # ---------------------------------------------------------------------------
 
-def fetch_html(url: str, timeout: int = 60, retries: int = 2) -> BeautifulSoup | None:
-    import warnings
-    try:
-        from bs4 import XMLParsedAsHTMLWarning
-        warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
-    except ImportError:
-        pass
-    for attempt in range(retries):
-        try:
-            resp = requests.get(url, timeout=timeout,
-                                headers={"User-Agent": "Mozilla/5.0 ngo-grants-bot/1.0"})
-            resp.raise_for_status()
-            return BeautifulSoup(resp.text, "html.parser")
-        except Exception as e:
-            if attempt < retries - 1:
-                print(f"[fetch_html] Retry {attempt + 1}/{retries - 1} for {url}: {e}")
-                time.sleep(5)
-            else:
-                print(f"[fetch_html] ERROR {url}: {e}")
-                return None
-
-
-UKRAINIAN_MONTHS = {
-    "січня": 1, "лютого": 2, "березня": 3, "квітня": 4,
-    "травня": 5, "червня": 6, "липня": 7, "серпня": 8,
-    "вересня": 9, "жовтня": 10, "листопада": 11, "грудня": 12,
-    "січень": 1, "лютий": 2, "березень": 3, "квітень": 4,
-    "травень": 5, "червень": 6, "липень": 7, "серпень": 8,
-    "вересень": 9, "жовтень": 10, "листопад": 11, "грудень": 12,
-}
-
-
-def is_deadline_passed(deadline_str: str) -> bool:
-    """Повертає True, якщо дедлайн вже минув (порівнює з сьогоднішньою датою).
-
-    Розпізнає формати:
-    - "1 липня 2026 року" / "1 липня 2026"
-    - "01.07.2026" / "01/07/2026" / "01-07-2026"
-    - "July 1, 2026" / "1 July 2026"
-    Якщо дату розпізнати не вдалось — повертає False (публікуємо на всяк випадок).
-    """
-    from datetime import date
-    import re as _re
-
-    today = date.today()
-    text = deadline_str.strip().lower()
-
-    # Формат: "1 липня 2026" або "1 липня 2026 року"
-    match = _re.search(
-        r"(\d{1,2})\s+(" + "|".join(UKRAINIAN_MONTHS.keys()) + r")\s+(\d{4})",
-        text
-    )
-    if match:
-        try:
-            day = int(match.group(1))
-            month = UKRAINIAN_MONTHS[match.group(2)]
-            year = int(match.group(3))
-            return date(year, month, day) < today
-        except ValueError:
-            pass
-
-    # Формат: "01.07.2026" / "01/07/2026" / "01-07-2026"
-    match = _re.search(r"(\d{1,2})[./\-](\d{1,2})[./\-](\d{4})", text)
-    if match:
-        try:
-            day, month, year = int(match.group(1)), int(match.group(2)), int(match.group(3))
-            return date(year, month, day) < today
-        except ValueError:
-            pass
-
-    # Формат: "2026-07-01" (ISO)
-    match = _re.search(r"(\d{4})-(\d{2})-(\d{2})", text)
-    if match:
-        try:
-            year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
-            return date(year, month, day) < today
-        except ValueError:
-            pass
-
-    return False  # не вдалось розпізнати — публікуємо
-
-
 def run_isar(posted_links: set) -> None:
-    """ІСАР Єднання: читаємо меню 'Грантові конкурси'.
-
-    Увага: ІСАР не прибирає завершені конкурси з навігаційного меню одразу
-    після закриття дедлайну. Тому після завантаження сторінки конкурсу
-    перевіряємо дедлайн — якщо він у минулому, конкурс пропускаємо.
-    """
     soup = fetch_html(ISAR_URL)
     if not soup:
         return
@@ -516,81 +490,57 @@ def run_isar(posted_links: set) -> None:
             links_found.add((href, a.get_text(strip=True)))
 
     for link, title in sorted(links_found):
-        if not title or len(title) < 5:
+        if not title or len(title) < 5 or link in posted_links:
             continue
-        if link in posted_links:
-            continue
-        if is_excluded(title) or is_excluded(link):
-            print(f"[ІСАР] Skipped (фільтр): {title}")
+        if is_excluded(title):
+            print(f"[ІСАР] Skipped: {title}")
             save_posted_link(link)
             posted_links.add(link)
             continue
-
-        print(f"[ІСАР] Processing: {title}")
         try:
             page = fetch_html(link)
             if not page:
                 continue
-
             page_text = page.get_text(" ", strip=True)
-
-            # Перевіряємо дедлайн — якщо він у минулому, пропускаємо конкурс.
-            # extract_deadline повертає рядок типу "1 липня 2026 року" або "01.07.2026".
-            # Намагаємось розпізнати дату і порівняти з сьогодні.
             deadline_str = extract_deadline(page_text)
             if deadline_str and is_deadline_passed(deadline_str):
-                print(f"[ІСАР] Skipped (дедлайн минув: {deadline_str}): {title}")
+                print(f"[ІСАР] Skipped (дедлайн минув): {title}")
                 save_posted_link(link)
                 posted_links.add(link)
                 continue
-
-            # Опис — перший змістовний абзац
             description = ""
             content = page.find("div", class_=re.compile(r"item-page|article|content"))
             if content:
                 for p in content.find_all("p"):
-                    text = p.get_text(" ", strip=True)
-                    if len(text) > 80:
-                        description = text[:600]
+                    t = p.get_text(" ", strip=True)
+                    if len(t) > 80:
+                        description = t[:600]
                         break
             if not description:
                 description = title
-
+            print(f"[ІСАР] Processing: {title}")
             msg = f"📌 <b>{title}</b>\n"
             if deadline_str:
                 msg += f"📅 <b>Дедлайн:</b> {deadline_str}\n"
             msg += f"\n{description}\n\n🔗 <a href=\"{link}\">ІСАР Єднання — джерело</a>\n"
-
-            response = send_telegram_message(msg)
-            if response.status_code == 200:
+            resp = send_telegram_message(msg)
+            print(resp.text)
+            if resp.status_code == 200:
                 save_posted_link(link)
                 posted_links.add(link)
             time.sleep(2)
         except Exception as e:
             print(f"[ІСАР] ERROR {link}: {e}")
 
-            response = send_telegram_message(msg)
-            if response.status_code == 200:
-                save_posted_link(link)
-                posted_links.add(link)
-            time.sleep(2)  # пауза між запитами до сайту
-        except Exception as e:
-            print(f"[ІСАР] ERROR {link}: {e}")
 
+# ---------------------------------------------------------------------------
+# МФ «Відродження»
+# ---------------------------------------------------------------------------
 
 def run_irf(posted_links: set) -> None:
-    """МФ «Відродження»: збираємо активні конкурси.
-
-    МФВ не має RSS. Sitemap захищений або має іншу структуру.
-    Стратегія: читаємо сторінку /grants/contests/ і шукаємо
-    всі посилання на /contest/... Якщо сторінка повернула
-    порожній HTML (JS-рендеринг) — спробуємо sitemap з xml-парсером.
-    """
     import xml.etree.ElementTree as ET
 
     contest_urls = []
-
-    # Спроба 1: сторінка /grants/contests/ — шукаємо посилання
     soup = fetch_html("https://www.irf.ua/grants/contests/")
     if soup:
         for a in soup.find_all("a", href=True):
@@ -601,18 +551,13 @@ def run_irf(posted_links: set) -> None:
                 if href.startswith("https://www.irf.ua/contest/") and href not in contest_urls:
                     contest_urls.append(href)
 
-    # Спроба 2: sitemap з правильним XML-парсером
     if not contest_urls:
         try:
             import warnings
             from bs4 import XMLParsedAsHTMLWarning
             warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
-
-            r = requests.get(
-                "https://www.irf.ua/sitemap.xml",
-                timeout=30,
-                headers={"User-Agent": "Mozilla/5.0 ngo-grants-bot/1.0"}
-            )
+            r = requests.get("https://www.irf.ua/sitemap.xml", timeout=30,
+                             headers={"User-Agent": "Mozilla/5.0 ngo-grants-bot/1.0"})
             if r.status_code == 200:
                 root = ET.fromstring(r.content)
                 ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
@@ -624,70 +569,54 @@ def run_irf(posted_links: set) -> None:
             print(f"[МФВ] Sitemap error: {e}")
 
     if not contest_urls:
-        print("[МФВ] Не вдалось знайти конкурси (сторінка і sitemap порожні)")
+        print("[МФВ] Не вдалось знайти конкурси")
         return
 
     print(f"[МФВ] Знайдено {len(contest_urls)} конкурсів")
-
     for link in contest_urls:
         if link in posted_links:
             continue
-
         try:
             page = fetch_html(link)
             if not page:
                 continue
-
             h1 = page.find("h1")
             title = h1.get_text(" ", strip=True) if h1 else link
-
             page_text = page.get_text(" ", strip=True)
             page_text_lower = page_text.lower()
-
-            # Відсіюємо завершені конкурси за текстом
-            if (
-                "завершення конкурсу" in page_text_lower
-                or "конкурс завершено" in page_text_lower
-                or "завершений конкурс" in page_text_lower
-            ):
+            if any(x in page_text_lower for x in
+                   ["завершення конкурсу", "конкурс завершено", "завершений конкурс"]):
                 print(f"[МФВ] Skipped (завершений): {title}")
                 save_posted_link(link)
                 posted_links.add(link)
                 continue
-
-            # Відсіюємо за дедлайном
             deadline_str = extract_deadline(page_text)
             if deadline_str and is_deadline_passed(deadline_str):
-                print(f"[МФВ] Skipped (дедлайн минув: {deadline_str}): {title}")
+                print(f"[МФВ] Skipped (дедлайн минув): {title}")
                 save_posted_link(link)
                 posted_links.add(link)
                 continue
-
-            # Фільтр тендерів/закупівель
             if is_excluded(title) or is_excluded(page_text[:300]):
                 print(f"[МФВ] Skipped (фільтр): {title}")
                 save_posted_link(link)
                 posted_links.add(link)
                 continue
-
             print(f"[МФВ] Processing: {title}")
-
             description = ""
             for p in page.find_all("p"):
-                text = p.get_text(" ", strip=True)
-                if len(text) > 80 and "завершення конкурсу" not in text.lower():
-                    description = text[:600]
+                t = p.get_text(" ", strip=True)
+                if len(t) > 80 and "завершення конкурсу" not in t.lower():
+                    description = t[:600]
                     break
             if not description:
                 description = title
-
             msg = f"📌 <b>{title}</b>\n"
             if deadline_str:
                 msg += f"📅 <b>Дедлайн:</b> {deadline_str}\n"
             msg += f"\n{description}\n\n🔗 <a href=\"{link}\">МФ «Відродження» — джерело</a>\n"
-
-            response = send_telegram_message(msg)
-            if response.status_code == 200:
+            resp = send_telegram_message(msg)
+            print(resp.text)
+            if resp.status_code == 200:
                 save_posted_link(link)
                 posted_links.add(link)
             time.sleep(2)
@@ -696,55 +625,15 @@ def run_irf(posted_links: set) -> None:
 
 
 # ---------------------------------------------------------------------------
-# ДЕДУПЛІКАЦІЯ ЗА ЗАГОЛОВКОМ
-# Якщо один грант публікується з двох джерел з однаковою назвою —
-# публікуємо лише перший. Зберігаємо нормалізований хеш заголовку
-# в окремому файлі posted_titles.txt.
-# ---------------------------------------------------------------------------
-
-POSTED_TITLES_FILE = "posted_titles.txt"
-
-
-def load_posted_titles() -> set:
-    try:
-        with open(POSTED_TITLES_FILE, "r", encoding="utf-8") as f:
-            return set(f.read().splitlines())
-    except FileNotFoundError:
-        return set()
-
-
-def title_hash(title: str) -> str:
-    """Нормалізований хеш першиx 80 символів заголовку."""
-    normalized = re.sub(r"\s+", " ", title.strip().lower())[:80]
-    return hashlib.md5(normalized.encode("utf-8")).hexdigest()
-
-
-def is_title_duplicate(title: str, posted_titles: set) -> bool:
-    return title_hash(title) in posted_titles
-
-
-def save_title_hash(title: str, posted_titles: set) -> None:
-    h = title_hash(title)
-    if h not in posted_titles:
-        posted_titles.add(h)
-        with open(POSTED_TITLES_FILE, "a", encoding="utf-8") as f:
-            f.write(h + "\n")
-
-
-# ---------------------------------------------------------------------------
-# УКФ — Український культурний фонд (ucf.in.ua)
-# Конкурси публікуються на /programs як картки з назвою та посиланням.
-# Платформа власна (не WordPress), без RSS.
-# Конкурсів мало (5-10 на сезон), зате всі унікальні.
+# УКФ
 # ---------------------------------------------------------------------------
 
 def run_ucf(posted_links: set, posted_titles: set) -> None:
     soup = fetch_html(UCF_URL)
     if not soup:
-        print("[УКФ] Не вдалось завантажити сторінку програм")
+        print("[УКФ] Не вдалось завантажити")
         return
 
-    # Шукаємо посилання на програми/конкурси
     contest_links = []
     for a in soup.find_all("a", href=True):
         href = a["href"]
@@ -755,77 +644,57 @@ def run_ucf(posted_links: set, posted_titles: set) -> None:
                 contest_links.append(href)
 
     if not contest_links:
-        print("[УКФ] Жодного конкурсу не знайдено на сторінці")
+        print("[УКФ] Жодного конкурсу")
         return
 
     print(f"[УКФ] Знайдено {len(contest_links)} програм")
+    UCF_JUNK = ["ви можете поставити питання", "отримати на нього відповідь",
+                "напишіть нам", "підписка на новини"]
 
-    for link in contest_links[:15]:  # обмежуємо щоб не спамити при першому запуску
+    for link in contest_links[:15]:
         if link in posted_links:
             continue
         try:
             page = fetch_html(link)
             if not page:
                 continue
-
             h1 = page.find("h1")
             title = h1.get_text(" ", strip=True) if h1 else ""
             if not title:
                 continue
-
-            if is_title_duplicate(title, posted_titles):
-                print(f"[УКФ] Skipped (дубль заголовку): {title[:60]}")
+            if is_title_duplicate(title, posted_titles) or is_excluded(title):
                 save_posted_link(link)
                 posted_links.add(link)
                 continue
-
-            if is_excluded(title):
-                print(f"[УКФ] Skipped (фільтр): {title[:60]}")
-                save_posted_link(link)
-                posted_links.add(link)
-                continue
-
             page_text = page.get_text(" ", strip=True)
             deadline_str = extract_deadline(page_text)
             if deadline_str and is_deadline_passed(deadline_str):
-                print(f"[УКФ] Skipped (дедлайн минув: {deadline_str}): {title[:50]}")
                 save_posted_link(link)
                 posted_links.add(link)
                 continue
-
-            # Опис — перший змістовний абзац, пропускаємо службові тексти
-            # (форма зворотного зв'язку, навігація, короткі підписи)
-            UCF_JUNK = [
-                "ви можете поставити питання",
-                "отримати на нього відповідь",
-                "напишіть нам",
-                "підписка на новини",
-            ]
             description = ""
             for p in page.find_all("p"):
-                text = p.get_text(" ", strip=True)
-                if len(text) < 100:
+                t = p.get_text(" ", strip=True)
+                if len(t) < 100 or any(j in t.lower() for j in UCF_JUNK):
                     continue
-                if any(j in text.lower() for j in UCF_JUNK):
-                    continue
-                description = text[:600]
+                description = t[:600]
                 break
             if not description:
-                # Fallback — перший великий div з текстом
                 for div in page.find_all(["div", "section"]):
-                    text = div.get_text(" ", strip=True)
-                    if len(text) > 150 and not any(j in text.lower() for j in UCF_JUNK):
-                        description = text[:600]
+                    t = div.get_text(" ", strip=True)
+                    if len(t) > 150 and not any(j in t.lower() for j in UCF_JUNK):
+                        description = t[:600]
                         break
             if not description:
                 description = title
+            print(f"[УКФ] Processing: {title[:60]}")
             msg = f"🎨 <b>{title}</b>\n"
             if deadline_str:
                 msg += f"📅 <b>Дедлайн:</b> {deadline_str}\n"
             msg += f"\n{description}\n\n🔗 <a href=\"{link}\">УКФ — джерело</a>\n"
-
-            response = send_telegram_message(msg)
-            if response.status_code == 200:
+            resp = send_telegram_message(msg)
+            print(resp.text)
+            if resp.status_code == 200:
                 save_posted_link(link)
                 posted_links.add(link)
                 save_title_hash(title, posted_titles)
@@ -835,234 +704,45 @@ def run_ucf(posted_links: set, posted_titles: set) -> None:
 
 
 # ---------------------------------------------------------------------------
-# УМФ — Український молодіжний фонд (uyf.gov.ua)
-# Конкурси публікуються на /programs — окремі сторінки по програмах.
-# Платформа власна, без RSS.
-# ---------------------------------------------------------------------------
-
-def run_umf(posted_links: set, posted_titles: set) -> None:
-    """УМФ: сторінка /programs рендериться через JS — requests бачить порожній HTML.
-    Стратегія: читаємо RSS новин УМФ (якщо є) або сканує /news на посилання
-    типу /programs/[slug] — там публікуються оголошення конкурсів."""
-
-    contest_links = []
-
-    # Спроба 1: RSS новин УМФ
-    feed = feedparser.parse("https://uyf.gov.ua/rss/")
-    if not feed.entries:
-        feed = feedparser.parse("https://uyf.gov.ua/feed/")
-
-    if feed.entries:
-        for entry in feed.entries[:20]:
-            link = entry.link
-            # Відбираємо лише посилання на програми/конкурси
-            if "/programs/" in link and link not in contest_links:
-                contest_links.append(link)
-        print(f"[УМФ] Знайдено {len(contest_links)} конкурсів через RSS")
-
-    # Спроба 2: сторінка новин — там є посилання на програми
-    if not contest_links:
-        news_soup = fetch_html("https://uyf.gov.ua/news")
-        if news_soup:
-            for a in news_soup.find_all("a", href=True):
-                href = a["href"]
-                if "/programs/" in href:
-                    if href.startswith("/"):
-                        href = "https://uyf.gov.ua" + href
-                    if href not in contest_links:
-                        contest_links.append(href)
-            print(f"[УМФ] Знайдено {len(contest_links)} конкурсів через /news")
-
-    if not contest_links:
-        print("[УМФ] Жодного конкурсу не знайдено (JS-рендеринг, RSS недоступний)")
-        return
-
-    for link in contest_links[:10]:
-        if link in posted_links:
-            continue
-        try:
-            page = fetch_html(link)
-            if not page:
-                continue
-
-            h1 = page.find("h1")
-            title = h1.get_text(" ", strip=True) if h1 else ""
-            if not title:
-                continue
-
-            if is_title_duplicate(title, posted_titles):
-                print(f"[УМФ] Skipped (дубль заголовку): {title[:60]}")
-                save_posted_link(link)
-                posted_links.add(link)
-                continue
-
-            if is_excluded(title):
-                print(f"[УМФ] Skipped (фільтр): {title[:60]}")
-                save_posted_link(link)
-                posted_links.add(link)
-                continue
-
-            page_text = page.get_text(" ", strip=True)
-            deadline_str = extract_deadline(page_text)
-            if deadline_str and is_deadline_passed(deadline_str):
-                print(f"[УМФ] Skipped (дедлайн минув: {deadline_str}): {title[:50]}")
-                save_posted_link(link)
-                posted_links.add(link)
-                continue
-
-            description = ""
-            for p in page.find_all("p"):
-                text = p.get_text(" ", strip=True)
-                if len(text) > 80:
-                    description = text[:600]
-                    break
-            if not description:
-                description = title
-
-            print(f"[УМФ] Processing: {title[:60]}")
-            msg = f"🌱 <b>{title}</b>\n"
-            if deadline_str:
-                msg += f"📅 <b>Дедлайн:</b> {deadline_str}\n"
-            msg += f"\n{description}\n\n🔗 <a href=\"{link}\">УМФ — джерело</a>\n"
-
-            response = send_telegram_message(msg)
-            if response.status_code == 200:
-                save_posted_link(link)
-                posted_links.add(link)
-                save_title_hash(title, posted_titles)
-            time.sleep(2)
-        except Exception as e:
-            print(f"[УМФ] ERROR {link}: {e}")
-
-
-# ---------------------------------------------------------------------------
-# ВЕТЕРАНСЬКИЙ ФОНД (veteranfund.com.ua)
-# WordPress-сайт. Конкурси на /competitions/ зі списком карток,
-# кожен конкурс — окрема сторінка /contests/[slug]/
+# ВЕТЕРАНСЬКИЙ ФОНД
 # ---------------------------------------------------------------------------
 
 def run_veteranfund(posted_links: set, posted_titles: set) -> None:
-    soup = fetch_html(VF_URL)
-    if not soup:
-        print("[ВФ] Не вдалось завантажити сторінку конкурсів")
-        return
-
-    contest_links = []
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if "/contests/" in href and href != VF_URL:
-            if not href.startswith("http"):
-                href = "https://veteranfund.com.ua" + href
-            if href not in contest_links:
-                contest_links.append(href)
-
-    if not contest_links:
-        print("[ВФ] Жодного конкурсу не знайдено на сторінці")
-        return
-
-    print(f"[ВФ] Знайдено {len(contest_links)} конкурсів")
-
-    for link in contest_links:
-        if link in posted_links:
-            continue
-        try:
-            page = fetch_html(link)
-            if not page:
-                continue
-
-            h1 = page.find("h1")
-            title = h1.get_text(" ", strip=True) if h1 else ""
-            if not title:
-                continue
-
-            if is_title_duplicate(title, posted_titles):
-                print(f"[ВФ] Skipped (дубль заголовку): {title[:60]}")
-                save_posted_link(link)
-                posted_links.add(link)
-                continue
-
-            if is_excluded(title):
-                print(f"[ВФ] Skipped (фільтр): {title[:60]}")
-                save_posted_link(link)
-                posted_links.add(link)
-                continue
-
-            page_text = page.get_text(" ", strip=True)
-            deadline_str = extract_deadline(page_text)
-            if deadline_str and is_deadline_passed(deadline_str):
-                print(f"[ВФ] Skipped (дедлайн минув: {deadline_str}): {title[:50]}")
-                save_posted_link(link)
-                posted_links.add(link)
-                continue
-
-            description = ""
-            for p in page.find_all("p"):
-                text = p.get_text(" ", strip=True)
-                if len(text) > 80:
-                    description = text[:600]
-                    break
-            if not description:
-                description = title
-
-            print(f"[ВФ] Processing: {title[:60]}")
-            msg = f"🎖 <b>{title}</b>\n"
-            if deadline_str:
-                msg += f"📅 <b>Дедлайн:</b> {deadline_str}\n"
-            msg += f"\n{description}\n\n🔗 <a href=\"{link}\">Ветеранський фонд — джерело</a>\n"
-
-            response = send_telegram_message(msg)
-            if response.status_code == 200:
-                save_posted_link(link)
-                posted_links.add(link)
-                save_title_hash(title, posted_titles)
-            time.sleep(2)
-        except Exception as e:
-            print(f"[ВФ] ERROR {link}: {e}")
-
-
-def run_veteranfund(posted_links: set, posted_titles: set) -> None:
-    """Ветеранський фонд: спочатку пробуємо RSS /contests/feed/,
-    якщо заблоковано — читаємо HTML сторінки /competitions/."""
-
     contest_links = []
 
-    # Спроба 1: RSS
     feed = feedparser.parse(VF_RSS)
     if feed.entries:
-        print(f"[ВФ] RSS працює: {len(feed.entries)} записів")
+        print(f"[ВФ] RSS: {len(feed.entries)} записів")
         for entry in reversed(feed.entries[:15]):
-            if entry.link not in contest_links:
+            if entry.link not in [l for l, _ in contest_links]:
                 contest_links.append((entry.link, entry.title.strip()))
     else:
-        # Спроба 2: HTML сторінки /competitions/
         soup = fetch_html(VF_COMPETITIONS)
         if soup:
             for a in soup.find_all("a", href=True):
                 href = a["href"]
-                # Беремо лише конкретні сторінки конкурсів /contests/[slug]/
-                # виключаємо саму сторінку /competitions/ і /contests/ без slug
                 if "/contests/" not in href:
                     continue
                 if not href.startswith("http"):
                     href = "https://veteranfund.com.ua" + href
-                # Пропускаємо якщо це та сама сторінка /competitions/ або /contests/ без slug
-                if href.rstrip("/") in [
-                    "https://veteranfund.com.ua/competitions",
-                    "https://veteranfund.com.ua/contests",
-                ]:
+                if href.rstrip("/") in ["https://veteranfund.com.ua/competitions",
+                                        "https://veteranfund.com.ua/contests"]:
                     continue
                 text = a.get_text(strip=True)
                 if href not in [l for l, _ in contest_links]:
                     contest_links.append((href, text))
             if contest_links:
-                print(f"[ВФ] HTML: знайдено {len(contest_links)} конкурсів")
+                print(f"[ВФ] HTML: {len(contest_links)} конкурсів")
         else:
-            print("[ВФ] Не вдалось завантажити (RSS і HTML недоступні)")
+            print("[ВФ] Не вдалось завантажити")
             return
 
     if not contest_links:
-        print("[ВФ] Жодного конкурсу не знайдено")
+        print("[ВФ] Жодного конкурсу")
         return
+
+    INVALID_TITLES = ["українська", "english", "головна", "конкурси", "новини",
+                      "more details", "детальніше", "докладніше", "читати далі"]
 
     for link, nav_title in contest_links:
         if link in posted_links:
@@ -1071,33 +751,21 @@ def run_veteranfund(posted_links: set, posted_titles: set) -> None:
             page = fetch_html(link)
             if not page:
                 continue
-
             h1 = page.find("h1")
             title = h1.get_text(" ", strip=True) if h1 else ""
-
-            # Відкидаємо нерелевантні заголовки (мовні перемикачі, навігація, кнопки)
-            INVALID_TITLES = [
-                "українська", "english", "головна", "конкурси", "новини",
-                "more details", "детальніше", "докладніше", "читати далі",
-            ]
             if not title or len(title) < 10 or title.lower().strip() in INVALID_TITLES:
-                # Спробуємо знайти заголовок в інших тегах
                 for tag in ["h2", "h3"]:
                     h = page.find(tag)
                     if h:
-                        candidate = h.get_text(" ", strip=True)
-                        if len(candidate) >= 10 and candidate.lower() not in INVALID_TITLES:
-                            title = candidate
+                        c = h.get_text(" ", strip=True)
+                        if len(c) >= 10 and c.lower() not in INVALID_TITLES:
+                            title = c
                             break
-
-            # Якщо заголовок все ще нерелевантний — пропускаємо
             if not title or len(title) < 10 or title.lower().strip() in INVALID_TITLES:
                 print(f"[ВФ] Skipped (нерелевантний заголовок): {link[-50:]}")
                 save_posted_link(link)
                 posted_links.add(link)
                 continue
-
-            # Перевірка дублів — тепер після отримання реального заголовку
             if is_title_duplicate(title, posted_titles):
                 print(f"[ВФ] Skipped (дубль): {title[:60]}")
                 save_posted_link(link)
@@ -1108,32 +776,29 @@ def run_veteranfund(posted_links: set, posted_titles: set) -> None:
                 save_posted_link(link)
                 posted_links.add(link)
                 continue
-
             page_text = page.get_text(" ", strip=True)
             deadline_str = extract_deadline(page_text)
             if deadline_str and is_deadline_passed(deadline_str):
-                print(f"[ВФ] Skipped (дедлайн минув: {deadline_str}): {title[:50]}")
+                print(f"[ВФ] Skipped (дедлайн минув): {title[:50]}")
                 save_posted_link(link)
                 posted_links.add(link)
                 continue
-
             description = ""
             for p in page.find_all("p"):
-                text = p.get_text(" ", strip=True)
-                if len(text) > 100:
-                    description = text[:600]
+                t = p.get_text(" ", strip=True)
+                if len(t) > 100:
+                    description = t[:600]
                     break
             if not description:
                 description = title
-
             print(f"[ВФ] Processing: {title[:60]}")
             msg = f"🎖 <b>{title}</b>\n"
             if deadline_str:
                 msg += f"📅 <b>Дедлайн:</b> {deadline_str}\n"
             msg += f"\n{description}\n\n🔗 <a href=\"{link}\">Ветеранський фонд — джерело</a>\n"
-
-            response = send_telegram_message(msg)
-            if response.status_code == 200:
+            resp = send_telegram_message(msg)
+            print(resp.text)
+            if resp.status_code == 200:
                 save_posted_link(link)
                 posted_links.add(link)
                 save_title_hash(title, posted_titles)
@@ -1142,23 +807,20 @@ def run_veteranfund(posted_links: set, posted_titles: set) -> None:
             print(f"[ВФ] ERROR {link}: {e}")
 
 
-def run_umf_phase2(posted_links: set, posted_titles: set) -> None:
-    """УМФ Фаза 2: пробуємо RSS і сторінку новин.
-    Конкурси УМФ оголошуються через новини з посиланнями на /programs/[slug]."""
+# ---------------------------------------------------------------------------
+# УМФ
+# ---------------------------------------------------------------------------
 
+def run_umf(posted_links: set, posted_titles: set) -> None:
     contest_links = []
-
-    # Спроба 1: RSS
     for rss_url in [UMF_RSS, "https://uyf.gov.ua/feed/", "https://uyf.gov.ua/news/feed/"]:
         feed = feedparser.parse(rss_url)
         if feed.entries:
-            print(f"[УМФ] RSS працює: {rss_url}, {len(feed.entries)} записів")
+            print(f"[УМФ] RSS: {rss_url}, {len(feed.entries)} записів")
             for entry in feed.entries[:20]:
                 if "/programs/" in entry.link and entry.link not in contest_links:
                     contest_links.append(entry.link)
             break
-
-    # Спроба 2: HTML сторінки новин
     if not contest_links:
         soup = fetch_html(UMF_NEWS_URL)
         if soup:
@@ -1169,13 +831,10 @@ def run_umf_phase2(posted_links: set, posted_titles: set) -> None:
                         href = "https://uyf.gov.ua" + href
                     if href not in contest_links:
                         contest_links.append(href)
-
     if not contest_links:
         print("[УМФ] Конкурси не знайдено (JS або заблоковано)")
         return
-
     print(f"[УМФ] Знайдено {len(contest_links)} конкурсів")
-
     for link in contest_links[:10]:
         if link in posted_links:
             continue
@@ -1183,38 +842,34 @@ def run_umf_phase2(posted_links: set, posted_titles: set) -> None:
             page = fetch_html(link)
             if not page:
                 continue
-
             h1 = page.find("h1")
             title = h1.get_text(" ", strip=True) if h1 else ""
             if not title or is_title_duplicate(title, posted_titles) or is_excluded(title):
                 save_posted_link(link)
                 posted_links.add(link)
                 continue
-
             page_text = page.get_text(" ", strip=True)
             deadline_str = extract_deadline(page_text)
             if deadline_str and is_deadline_passed(deadline_str):
                 save_posted_link(link)
                 posted_links.add(link)
                 continue
-
             description = ""
             for p in page.find_all("p"):
-                text = p.get_text(" ", strip=True)
-                if len(text) > 100:
-                    description = text[:600]
+                t = p.get_text(" ", strip=True)
+                if len(t) > 100:
+                    description = t[:600]
                     break
             if not description:
                 description = title
-
             print(f"[УМФ] Processing: {title[:60]}")
             msg = f"🌱 <b>{title}</b>\n"
             if deadline_str:
                 msg += f"📅 <b>Дедлайн:</b> {deadline_str}\n"
             msg += f"\n{description}\n\n🔗 <a href=\"{link}\">УМФ — джерело</a>\n"
-
-            response = send_telegram_message(msg)
-            if response.status_code == 200:
+            resp = send_telegram_message(msg)
+            print(resp.text)
+            if resp.status_code == 200:
                 save_posted_link(link)
                 posted_links.add(link)
                 save_title_hash(title, posted_titles)
@@ -1224,57 +879,17 @@ def run_umf_phase2(posted_links: set, posted_titles: set) -> None:
 
 
 # ---------------------------------------------------------------------------
-# TELEGRAM-КАНАЛИ через t.me/s/ (публічна веб-версія)
-# Унікальний ключ для кожного повідомлення: @channel/message_id
-# Відстежуємо лише нові пости — порівнюємо message_id з posted_links.
+# TELEGRAM КАНАЛИ
 # ---------------------------------------------------------------------------
-
-TG_CHANNELS = [
-    # (@username, "Назва для логу та повідомлення")
-    ("grantsua",        "Гранти UA"),
-    ("grantovyphishky", "Грантові фішки"),
-    ("houseofeurope",   "House of Europe"),   # офіційний канал ЄС для України — унікальний контент
-    ("grants_here",     "Гранти та можливості"),  # Connection Agency — 16K+ підписників, якісні гранти
-]
-
-# Маркери рекламного/нерелевантного контенту в Telegram-каналах
-TG_JUNK_MARKERS = [
-    # Реклама власних курсів/послуг @grantovyphishky
-    "консультацію", "замовити консультацію", "мій курс", "мої курси",
-    "придбати курс", "навчання у мене", "записатись до мене",
-    "безкоштовні курси", "освітні послуги", "наставництво",
-    "підписатись на інстаграм", "підписуйтесь на інстаграм",
-    # Реклама @grantsua
-    "допомога бізнесу і громадам", "написати нам",
-    # Загальні ознаки нерекламних але нерелевантних постів
-    "вакансія", "вакансії", "job opening",
-    # Ключові слова тендерів (вже є в EXCLUDE_KEYWORDS але дублюємо для надійності)
-    "запит цінових пропозицій", "тендер на закупівлю",
-]
-
-
-def is_tg_junk(text: str) -> bool:
-    t = text.lower()
-    return any(m in t for m in TG_JUNK_MARKERS) or is_excluded(text)
-
 
 def run_tg_channel(username: str, channel_name: str,
                    posted_links: set, posted_titles: set) -> None:
-    """Читає публічний Telegram-канал через t.me/s/ веб-версію.
-
-    Кожне повідомлення ідентифікується як @username/message_id.
-    Публікує лише нові пости (не в posted_links), не старіші ніж 7 днів,
-    після фільтрації реклами і тендерів.
-    """
     from datetime import datetime, timezone, timedelta
-
     url = f"https://t.me/s/{username}"
     try:
-        resp = requests.get(
-            url, timeout=60,
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                                   "AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"}
-        )
+        resp = requests.get(url, timeout=60, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"})
         resp.raise_for_status()
     except Exception as e:
         print(f"[@{username}] Не вдалось завантажити: {e}")
@@ -1282,17 +897,14 @@ def run_tg_channel(username: str, channel_name: str,
 
     soup = BeautifulSoup(resp.text, "html.parser")
     messages = soup.find_all("div", class_="tgme_widget_message_wrap")
-
     if not messages:
-        print(f"[@{username}] Повідомлень не знайдено (можливо заблоковано або приватний)")
+        print(f"[@{username}] Повідомлень не знайдено")
         return
 
     print(f"[@{username}] Знайдено {len(messages)} повідомлень")
-
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
 
-    for msg in reversed(messages):  # від старіших до новіших
-        # Унікальний ID повідомлення
+    for msg in reversed(messages):
         msg_link_tag = msg.find("a", class_="tgme_widget_message_date")
         if not msg_link_tag:
             continue
@@ -1300,30 +912,24 @@ def run_tg_channel(username: str, channel_name: str,
         if not msg_url:
             continue
 
-        # Ключ для posted_links
         item_key = f"tg_{username}_{msg_url.split('/')[-1]}"
         if item_key in posted_links:
             continue
 
-        # Перевірка дати — не публікуємо старі пости
         time_tag = msg_link_tag.find("time")
         if time_tag and time_tag.get("datetime"):
             try:
                 msg_dt = datetime.fromisoformat(
-                    time_tag["datetime"].replace("Z", "+00:00")
-                )
+                    time_tag["datetime"].replace("Z", "+00:00"))
                 if msg_dt < cutoff:
-                    # Старий пост — маркуємо як оброблений і пропускаємо
                     save_posted_link(item_key)
                     posted_links.add(item_key)
                     continue
             except ValueError:
                 pass
 
-        # Текст повідомлення
         text_div = msg.find("div", class_="tgme_widget_message_text")
         if not text_div:
-            # Можливо пост без тексту (фото/відео без підпису)
             save_posted_link(item_key)
             posted_links.add(item_key)
             continue
@@ -1334,19 +940,14 @@ def run_tg_channel(username: str, channel_name: str,
             posted_links.add(item_key)
             continue
 
-        # Фільтр реклами і тендерів
         if is_tg_junk(text):
             print(f"[@{username}] Skipped (реклама/тендер): {text[:60]}")
             save_posted_link(item_key)
             posted_links.add(item_key)
             continue
 
-        # Перший рядок як заголовок
-        first_line = text.split("\n")[0].strip()[:90]
-        if not first_line:
-            first_line = text[:90]
+        first_line = text.split("\n")[0].strip()[:90] or text[:90]
 
-        # Дедуплікація за заголовком
         if is_title_duplicate(first_line, posted_titles):
             print(f"[@{username}] Skipped (дубль): {first_line[:60]}")
             save_posted_link(item_key)
@@ -1354,10 +955,8 @@ def run_tg_channel(username: str, channel_name: str,
             continue
 
         print(f"[@{username}] Processing: {first_line[:60]}")
-
         summary = text[:600] + "..." if len(text) > 600 else text
         deadline = extract_deadline(text)
-
         msg_text = f"📌 <b>{first_line}</b>\n"
         if deadline:
             msg_text += f"📅 <b>Дедлайн:</b> {deadline}\n"
@@ -1365,6 +964,7 @@ def run_tg_channel(username: str, channel_name: str,
 
         try:
             response = send_telegram_message(msg_text)
+            print(response.text)
             if response.status_code == 200:
                 save_posted_link(item_key)
                 posted_links.add(item_key)
@@ -1382,22 +982,19 @@ def main():
     posted_links = load_posted_links()
     posted_titles = load_posted_titles()
 
-    # RSS-джерела
     run_chaszmin(posted_links)
     run_simple_source(GURT_RSS,     "ГУРТ — джерело",                posted_links)
     run_simple_source(PROSTIR_RSS,  "Громадський Простір — джерело", posted_links)
-    run_simple_source(GETGRANT_RSS, "GetGrant — джерело", posted_links,
+    run_simple_source(GETGRANT_RSS, "GetGrant — джерело",            posted_links,
                       analytics_filter=True)
-
-    # HTML-скрейпери — загальні
     run_isar(posted_links)
     run_irf(posted_links)
-
-    # HTML-скрейпери — державні фонди
     run_ucf(posted_links, posted_titles)
     run_veteranfund(posted_links, posted_titles)
-    run_umf_phase2(posted_links, posted_titles)
-
-    # Telegram-канали через t.me/s/
+    run_umf(posted_links, posted_titles)
     for username, channel_name in TG_CHANNELS:
         run_tg_channel(username, channel_name, posted_links, posted_titles)
+
+
+if __name__ == "__main__":
+    main()
