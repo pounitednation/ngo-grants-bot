@@ -30,7 +30,7 @@ TG_CHANNELS = [
     ("grantsua",        "Гранти UA"),
     ("grantovyphishky", "Грантові фішки"),
     ("houseofeurope",   "House of Europe"),
-    ("grants_here",     "Гранти та можливості"),
+    ("grants_here",     "Гранти та можливості"),  # 20K+ підписників, Connection Agency
 ]
 
 # ---------------------------------------------------------------------------
