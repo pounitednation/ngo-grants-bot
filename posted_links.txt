@@ -1070,3 +1070,11 @@ tg_grantsua_1591
 tg_grantovyphishky_8621
 tg_houseofeurope_2566
 tg_grants_here_2360
+https://www.prostir.ua/?grants=konkurs-dlya-ho-na-otrymannya-posluh-z-orhanizatsijnoho-rozvytku#0
+https://www.prostir.ua/?grants=tender-iz-zakupivli-obladnannya-ta-oblashtuvannya-sensornoji-kimnaty#0
+https://www.prostir.ua/?grants=tender-na-kompleksnyj-lohistychnyj-suprovid-projektnyh-zahodiv-2#0
+https://www.prostir.ua/?grants=supply-of-it-equipment-for-healthcare-facilities-in-odesa-region-postachannya-it-obladnannya-dlya-zakladiv-ohorony-zdorovya-odeskoji-oblasti#0
+https://www.prostir.ua/?grants=provedennya-kompleksnoho-doslidzhennya-rehionalnoho-medijnoho-sehmenta-youtube-v-ukrajini#0
+https://www.prostir.ua/?grants=provedennya-prykladnoho-doslidzhennya-telegram-kanaliv-rehionalnyh-media#0
+https://www.prostir.ua/?grants=zapyt-komertsijnyh-propozytsij-na-posluhy-z-orhanizatsiji-4-oh-dvodennyh-zahodiv-v-dnipropetrovskij-oblasti#0
+tg_grants_here_2361
